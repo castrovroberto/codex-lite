@@ -28,12 +28,12 @@ Example:
   codex-lite analyze main.go --agents explain,syntax --model deepseek-coder-v2-lite
   codex-lite analyze utils.py --agents syntax --ollama-host http://custom-ollama:11434`,
 	Args: cobra.ExactArgs(1), // Requires exactly one argument: the file path
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		filePath := args[0]
 		fileData, err := os.ReadFile(filePath)
 		if err != nil {
 			logger.Get().Error("Error reading file", "path", filePath, "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to read file %s: %w", filePath, err)
 		}
 
 		// Config is already loaded globally by rootCmd's PersistentPreRunE
@@ -75,8 +75,7 @@ Example:
 		}
 
 		if len(agentsToRun) == 0 {
-			logger.Get().Error("No valid agents selected to run. Exiting.", "available_agents", "explain, syntax")
-			os.Exit(1)
+			return fmt.Errorf("no valid agents selected to run. Available: explain, syntax. Check config for 'default_agent_list' or use --agents flag")
 		}
 
 		// User-facing informational output can still use fmt.Printf or be logged at INFO level
@@ -100,6 +99,7 @@ Example:
 			fmt.Printf("\n📘 [%s] - Result from %s:\n%s\n", result.File, result.Agent, result.Output)
 			fmt.Println("---")
 		}
+		return nil
 	},
 }
 

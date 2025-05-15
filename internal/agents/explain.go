@@ -54,7 +54,9 @@ func (a *ExplainAgent) Analyze(ctx context.Context, modelName string, path strin
 		return Result{}, fmt.Errorf("ExplainAgent: failed to execute prompt template: %w", err)
 	}
 
-	response, err := ollama.Query(appCfg.OllamaHostURL, modelName, promptBuf.String())
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, appCfg.OllamaRequestTimeout)
+	defer cancel() // Ensure resources are released even if the function returns early.
+	response, err := ollama.Query(ctxWithTimeout, appCfg.OllamaHostURL, modelName, promptBuf.String())
 	if err != nil {
 		return Result{}, fmt.Errorf("ExplainAgent: error from Ollama: %w", err)
 	}

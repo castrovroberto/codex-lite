@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"text/template"
 
-	"github.com/castrovroberto/codex-lite/internal/config"
+	// "github.com/castrovroberto/codex-lite/internal/config" // No longer needed directly
+	"github.com/castrovroberto/codex-lite/internal/contextkeys"
 	"github.com/castrovroberto/codex-lite/internal/ollama"
+	// "github.com/castrovroberto/codex-lite/internal/logger" // No longer needed directly
 )
 
 type SecurityAgent struct{}
@@ -42,31 +44,60 @@ type SecurityAnalysisResponse struct {
 }
 
 func (a *SecurityAgent) Analyze(ctx context.Context, modelName, filePath, fileContent string) (Result, error) {
-	appCfg := config.GetConfig()
-	lang := getFileExtension(filePath) // Corrected: Use getFileExtension
+	log := contextkeys.LoggerFromContext(ctx)
+	appCfg := contextkeys.ConfigFromContext(ctx)
+	lang := getFileExtension(filePath)
+
+	log.Debug("Running SecurityAgent", "file", filePath, "model", modelName)
+
+	// Check for context cancellation early
+	select {
+	case <-ctx.Done():
+		log.Info("SecurityAgent analysis cancelled", "file", filePath)
+		return Result{AgentName: a.Name(), File: filePath}, ctx.Err()
+	default:
+		// Continue
+	}
 
 	data := securityTemplateData{Language: lang, Code: fileContent}
 	tmpl, err := template.New("securityPrompt").Parse(securityPromptTemplate)
 	if err != nil {
-		return Result{}, &AgentError{AgentName: a.Name(), Message: "failed to parse security prompt template", Err: err}
+		log.Error("Failed to parse security prompt template", "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{AgentName: a.Name(), Message: "failed to parse security prompt template", Err: err}
 	}
 	var promptBuf bytes.Buffer
 	if err := tmpl.Execute(&promptBuf, data); err != nil {
-		return Result{}, &AgentError{AgentName: a.Name(), Message: "failed to execute security prompt template", Err: err}
+		log.Error("Failed to execute security prompt template", "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{AgentName: a.Name(), Message: "failed to execute security prompt template", Err: err}
 	}
 
 	response, err := ollama.Query(ctx, appCfg.OllamaHostURL, modelName, promptBuf.String())
 	if err != nil {
-		return Result{}, &AgentError{AgentName: a.Name(), Message: "Ollama query failed during security audit", Err: err}
+		log.Error("Ollama query failed for SecurityAgent", "file", filePath, "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{AgentName: a.Name(), Message: "Ollama query failed during security audit", Err: err}
 	}
 
+	log.Debug("Received Ollama response for SecurityAgent", "file", filePath, "response_length", len(response))
 	var securityResp SecurityAnalysisResponse
 	if err := json.Unmarshal([]byte(response), &securityResp); err != nil {
-		return Result{}, &AgentError{AgentName: a.Name(), Message: "failed to parse JSON response for security audit", Err: fmt.Errorf("unmarshal error: %w, raw response: %s", err, response)}
+		log.Error("Failed to parse JSON response from Ollama for security audit", "response_snippet", response[:min(len(response), 200)], "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{AgentName: a.Name(), Message: "failed to parse JSON response for security audit", Err: fmt.Errorf("unmarshal error: %w, raw response: %s", err, response[:min(len(response), 500)])}
 	}
+
+	log.Debug("SecurityAgent analysis complete", "file", filePath)
 	return Result{
 		AgentName: a.Name(),
 		File:      filePath,
 		Output:    securityResp.SecurityAnalysis,
 	}, nil
+}
+
+// I've added a local min function to each agent file for simplicity.
+// If you have a shared utils package where getFileExtension lives,
+// you could add min there too.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -7,237 +7,227 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
+
+	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup" // For concurrent file processing
 
 	"github.com/castrovroberto/codex-lite/internal/agents"
 	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/contextkeys" // Import contextkeys
 	"github.com/castrovroberto/codex-lite/internal/logger"
-	"github.com/castrovroberto/codex-lite/internal/ollama" // Required for checking ollama specific errors
-	"github.com/spf13/cobra"
+	"github.com/castrovroberto/codex-lite/internal/ollama"
+	"github.com/castrovroberto/codex-lite/internal/orchestrator" // Import orchestrator
 )
 
 var (
-	agentsToRun []string
-	outputFile  string
-	modelToUse  string // Added model flag
-)
+	agentNames []string
+	recursive  bool
+	// cfgFile is defined in root.go
 
-var analyzeCmd = &cobra.Command{
-	Use:   "analyze [file_or_dir_paths...]",
-	Short: "Analyze code files using selected AI agents",
-	Long: `The analyze command processes one or more source code files or directories
-using a specified set of AI agents. Each agent performs a specific type of analysis
-(e.g., code explanation, smell detection, security audit).
-
-Results from all agents are aggregated and can be printed to the console or
-saved to a Markdown file.
-
-Supported Agents:
-  - explain: Explains what the code does.
-  - smell: Identifies code smells and suggests improvements.
-  - security: Audits code for potential security vulnerabilities.
-  - syntax: Checks for syntax errors and potential issues.
-  (Add more as they are implemented)
-
-You can specify which agents to run using the --agents flag with a comma-separated list.
-If --agents is not provided, a default set of agents might be used (currently TBD).
-The AI model used by the agents can be specified with the --model flag.`,
-	Args: cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg := config.GetConfig()
-		log := logger.Get()
-
-		if modelToUse == "" {
-			modelToUse = cfg.DefaultModel // Use default from config if not set by flag
-		}
-		if modelToUse == "" {
-			return errors.New("no model specified via --model flag or in config as default_model")
-		}
-
-		log.Info("Starting analysis", "paths", args, "agents", agentsToRun, "model", modelToUse, "output_file", outputFile)
-
-		// Initialize available agents
-		// In a real app, this might be more dynamic (e.g., plugin system or registry)
-		availableAgents := map[string]agents.Agent{
-			"explain":  agents.NewExplainAgent(),
-			"smell":    agents.NewSmellAgent(),
-			"security": agents.NewSecurityAgent(),
-			"syntax":   agents.NewSyntaxAgent(),
-		}
-
-		var selectedAgents []agents.Agent
-		if len(agentsToRun) == 0 {
-			// Default agents if none are specified (e.g., run all available)
-			log.Info("No agents specified, running all available agents")
-			for _, agent := range availableAgents {
-				selectedAgents = append(selectedAgents, agent)
-			}
-		} else {
-			for _, agentName := range agentsToRun {
-				agent, ok := availableAgents[strings.ToLower(agentName)]
-				if !ok {
-					log.Warn("Unknown agent specified, skipping.", "agent_name", agentName)
-					continue
-				}
-				selectedAgents = append(selectedAgents, agent)
-			}
-		}
-
-		if len(selectedAgents) == 0 {
-			return errors.New("no valid agents selected to run")
-		}
-
-		var filesToAnalyze []string
-		for _, pathArg := range args {
-			fileInfo, err := os.Stat(pathArg)
+	analyzeCmd = &cobra.Command{
+		Use:   "analyze [file patterns...]",
+		Short: "Analyze code files using specified agents",
+		Long: `Analyze command processes specified code files or patterns using a suite of agents.
+You can specify which agents to run using the --agent flag (comma-separated).
+If no agents are specified, all available agents will be run.
+Use --recursive to scan directories.`,
+		Example: `codex-lite analyze --agent="explainer,syntax" --recursive ./...
+codex-lite analyze path/to/your/file.go
+codex-lite analyze "*.py"`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Load configuration
+			appCfg, err := config.LoadConfig(cfgFile) // cfgFile from root.go
 			if err != nil {
-				log.Warn("Failed to stat path, skipping.", "path", pathArg, "error", err)
-				continue
+				// Use a basic logger if the main one hasn't been initialized due to config error
+				slog.Error("Failed to load configuration on startup", "error", err)
+				return fmt.Errorf("failed to load configuration: %w", err)
 			}
 
-			if fileInfo.IsDir() {
-				log.Info("Scanning directory", "dir", pathArg)
-				err := filepath.Walk(pathArg, func(path string, info os.FileInfo, err error) error {
-					if err != nil {
-						log.Warn("Error accessing path during directory walk, skipping.", "path", path, "error", err)
-						return nil // Continue walking
-					}
-					// TODO: Implement more sophisticated file type filtering (e.g., by extension, ignore .git, node_modules)
-					if !info.IsDir() && strings.Contains(info.Name(), ".") { // Basic check for files
-						log.Debug("Found file in directory", "file", path)
-						filesToAnalyze = append(filesToAnalyze, path)
-					}
-					return nil
-				})
-				if err != nil {
-					log.Error("Error walking directory", "dir", pathArg, "error", err)
-				}
+			// Initialize logger based on loaded config
+			log := logger.Init(appCfg.LogLevel, appCfg.LogFormat)
+			log.Info("Codex Lite analyze starting...")
+			log.Debug("Loaded configuration", "config", appCfg)
+
+			// Create base context and inject config and logger
+			baseCtx := cmd.Context() // Get context from Cobra command
+			ctxWithValues := context.WithValue(baseCtx, contextkeys.ConfigKey, appCfg)
+			ctxWithValues = context.WithValue(ctxWithValues, contextkeys.LoggerKey, log)
+
+			// Initialize and register agents with the orchestrator
+			agentOrchestrator := orchestrator.NewBasicOrchestrator()
+			// Register all known agents
+			if err := agentOrchestrator.RegisterAgent(agents.NewExplainAgent()); err != nil {
+				log.Warn("Failed to register Explain agent", "error", err) // Warn, don't stop
+			}
+			if err := agentOrchestrator.RegisterAgent(agents.NewSyntaxAgent()); err != nil {
+				log.Warn("Failed to register Syntax agent", "error", err)
+			}
+			if err := agentOrchestrator.RegisterAgent(agents.NewSmellAgent()); err != nil {
+				log.Warn("Failed to register Smell agent", "error", err)
+			}
+			if err := agentOrchestrator.RegisterAgent(agents.NewSecurityAgent()); err != nil {
+				log.Warn("Failed to register Security agent", "error", err)
+			}
+			// Add other agents here for registration
+
+			// Determine which agents to run
+			var agentsToRun []string
+			if len(agentNames) == 0 { // agentNames is the flag value
+				log.Info("No specific agents requested, attempting to run all registered agents.")
+				agentsToRun = agentOrchestrator.AvailableAgentNames()
 			} else {
-				filesToAnalyze = append(filesToAnalyze, pathArg)
-			}
-		}
-
-		if len(filesToAnalyze) == 0 {
-			log.Info("No files found to analyze.")
-			return nil
-		}
-
-		log.Info("Files to be analyzed", "count", len(filesToAnalyze), "files", filesToAnalyze)
-
-		var allResults []agents.Result
-		var resultsMutex sync.Mutex
-		var wg sync.WaitGroup
-
-		// Create a new context for this analysis run.
-		// This allows for cancellation if needed, though not fully implemented here.
-		analysisCtx, cancelAnalysis := context.WithCancel(cmd.Context())
-		defer cancelAnalysis()
-
-		for _, filePath := range filesToAnalyze {
-			fileData, err := os.ReadFile(filePath)
-			if err != nil {
-				log.Error("Failed to read file, skipping.", "file", filePath, "error", err)
-				fmt.Printf("⚠️ Error reading file %s: %v\n---\n", filePath, err)
-				continue
+				for _, requestedName := range agentNames {
+					if _, err := agentOrchestrator.GetAgent(requestedName); err != nil {
+						log.Warn("Requested agent not found, will be skipped.", "agent_name", requestedName)
+						fmt.Printf("⚠️ Warning: Agent '%s' not found. Skipping.\n", requestedName)
+					} else {
+						agentsToRun = append(agentsToRun, requestedName)
+					}
+				}
 			}
 
-			fmt.Printf("📄 Analyzing file: %s (Model: %s, Ollama: %s)\n", filePath, modelToUse, cfg.OllamaHostURL)
+			if len(agentsToRun) == 0 {
+				log.Info("No valid agents selected or available to run. Exiting.")
+				fmt.Println("No valid agents selected or available to run.")
+				return nil // Exit gracefully
+			}
 
-			for _, agent := range selectedAgents {
-				wg.Add(1)
-				go func(ctx context.Context, agentInstance agents.Agent, currentFilePath string, currentFileData []byte) {
-					defer wg.Done()
-					log.Info("Running agent on file", "agent", agentInstance.Name(), "file", currentFilePath)
-					fmt.Printf("🤖 Running %s...\n", agentInstance.Name())
+			log.Info("Selected agents to run", "agents", agentsToRun)
+			fmt.Printf("Selected agents: %s\n\n", strings.Join(agentsToRun, ", "))
 
-					// Pass the analysisCtx which has the timeout from AppConfig (via agent's use of ollama.Query)
-					result, agentErr := agentInstance.Analyze(ctx, modelToUse, currentFilePath, string(currentFileData))
+			// Determine files to analyze
+			if len(args) == 0 {
+				log.Error("No file patterns specified.")
+				fmt.Println("Error: No file patterns specified.")
+				cmd.Usage() // Show usage
+				return errors.New("no file patterns specified")
+			}
 
-					if agentErr != nil {
-						var agtErr *agents.AgentError
-						var ollamaHostErr, ollamaModelErr, ollamaInvalidRespErr, ollamaBadReqErr bool
+			var filesToAnalyze []string
+			for _, pattern := range args {
+				if recursive {
+					err := filepath.WalkDir(pattern, func(path string, d os.DirEntry, err error) error {
+						if err != nil {
+							log.Warn("Error accessing path during walk", "path", path, "error", err)
+							return filepath.SkipDir // Or return err to stop walking this dir
+						}
+						if !d.IsDir() {
+							// Basic check for non-binary might be useful, or rely on agents
+							filesToAnalyze = append(filesToAnalyze, path)
+						}
+						return nil
+					})
+					if err != nil {
+						log.Error("Error walking directory", "pattern", pattern, "error", err)
+						// Continue to next pattern if one walk fails
+					}
+				} else {
+					matches, err := filepath.Glob(pattern)
+					if err != nil {
+						log.Error("Invalid file pattern", "pattern", pattern, "error", err)
+						continue // Skip invalid patterns
+					}
+					for _, match := range matches {
+						if info, err := os.Stat(match); err == nil && !info.IsDir() {
+							filesToAnalyze = append(filesToAnalyze, match)
+						}
+					}
+				}
+			}
 
-						// Check for custom AgentError first
-						if errors.As(agentErr, &agtErr) {
-							log.Error("Agent execution failed",
-								"agent_name", agtErr.AgentName,
-								"file", currentFilePath,
-								"agent_message", agtErr.Message,
-								"underlying_error", agtErr.Unwrap(),
-							)
-							fmt.Printf("⚠️ Error with %s on %s (%s): %v\n", agtErr.AgentName, currentFilePath, agtErr.Message, agtErr.Unwrap())
+			if len(filesToAnalyze) == 0 {
+				log.Info("No files found matching the pattern(s) or specified paths. Exiting.")
+				fmt.Println("No files found to analyze.")
+				return nil
+			}
 
-							// Further check the unwrapped error for specific Ollama issues
-							if agtErr.Unwrap() != nil {
-								ollamaHostErr = errors.Is(agtErr.Unwrap(), ollama.ErrOllamaHostUnreachable)
-								ollamaModelErr = errors.Is(agtErr.Unwrap(), ollama.ErrOllamaModelNotFound)
-								ollamaInvalidRespErr = errors.Is(agtErr.Unwrap(), ollama.ErrOllamaInvalidResponse)
-								ollamaBadReqErr = errors.Is(agtErr.Unwrap(), ollama.ErrOllamaBadRequest)
+			log.Info("Files to analyze", "count", len(filesToAnalyze))
+			if len(filesToAnalyze) < 10 { // Log all files if list is short
+				log.Debug("Target files", "files", filesToAnalyze)
+			}
+
+
+			// Use errgroup for concurrent file processing, passing the context with values
+			g, analysisCtx := errgroup.WithContext(ctxWithValues)
+			// g.SetLimit(appCfg.MaxConcurrentAnalyzers) // Example: Limit concurrency from config
+
+			for _, filePath := range filesToAnalyze {
+				filePath := filePath // Capture loop variable for goroutine
+				g.Go(func() error {
+					log.Info("Starting analysis for file", "file", filePath)
+					fileContentBytes, err := os.ReadFile(filePath)
+					if err != nil {
+						log.Error("Failed to read file", "file", filePath, "error", err)
+						fmt.Printf("❌ Failed to read file %s: %v\n", filePath, err)
+						return nil // Return nil to allow other files to be processed
+					}
+
+					fmt.Printf("Analyzing %s...\n", filePath)
+
+					// Use the orchestrator to run agents for this file
+					results, orchErr := agentOrchestrator.RunAgents(analysisCtx, agentsToRun, filePath, string(fileContentBytes))
+					if orchErr != nil {
+						// This error is typically context cancellation from the orchestrator
+						log.Error("Orchestrator encountered an error for file", "file", filePath, "error", orchErr)
+						fmt.Printf("⚠️ Orchestrator error for %s: %v\n", filePath, orchErr)
+						if errors.Is(orchErr, context.Canceled) || errors.Is(orchErr, context.DeadlineExceeded) {
+							return orchErr // Propagate context errors to stop the errgroup
+						}
+						// For other orchestrator errors, decide if we stop or continue
+						// return orchErr // Uncomment to stop all on any orchestrator error
+					}
+
+					// Process results collected by the orchestrator
+					for _, result := range results {
+						if result.Error != nil {
+							// Handle individual agent error that the orchestrator collected
+							var agentErr *agents.AgentError
+							var ollamaErrHostUnreachable, ollamaErrModelNotFound error // For cleaner errors.Is
+
+							if errors.As(result.Error, &agentErr) {
+								log.Error("Agent execution failed", "agent_name", agentErr.AgentName, "file", result.File, "agent_message", agentErr.Message, "underlying_error", agentErr.Unwrap())
+								fmt.Printf("⚠️ Error with %s (%s) on %s: %v\n", agentErr.AgentName, agentErr.Message, result.File, agentErr.Unwrap())
+							} else if errors.Is(result.Error, ollama.ErrOllamaHostUnreachable) { // Compare with sentinel errors directly
+								log.Error("Ollama host unreachable", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
+								fmt.Printf("⚠️ Error with %s on %s: Could not connect to Ollama: %v\n", result.AgentName, result.File, result.Error)
+							} else if errors.Is(result.Error, ollama.ErrOllamaModelNotFound) {
+								log.Error("Ollama model not found", "agent_name", result.AgentName, "file", result.File, "error", result.Error, "model_used", appCfg.ModelName)
+								fmt.Printf("⚠️ Error with %s on %s: The model '%s' was not found by Ollama: %v\n", result.AgentName, result.File, appCfg.ModelName, result.Error)
+							} else {
+								log.Error("Generic error during agent analysis", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
+								fmt.Printf("⚠️ Error with %s on %s: %v\n", result.AgentName, result.File, result.Error)
 							}
 						} else {
-							// If not an AgentError, check for direct Ollama errors (less likely if agents wrap correctly)
-							ollamaHostErr = errors.Is(agentErr, ollama.ErrOllamaHostUnreachable)
-							ollamaModelErr = errors.Is(agentErr, ollama.ErrOllamaModelNotFound)
-							ollamaInvalidRespErr = errors.Is(agentErr, ollama.ErrOllamaInvalidResponse)
-							ollamaBadReqErr = errors.Is(agentErr, ollama.ErrOllamaBadRequest)
-
-							// Log generic error if not an AgentError
-							log.Error("Error during agent analysis", "agent_name", agentInstance.Name(), "file", currentFilePath, "error", agentErr)
-							fmt.Printf("⚠️ Error with %s on %s: %v\n", agentInstance.Name(), currentFilePath, agentErr)
+							fmt.Printf("✅ %s analysis complete for %s.\n", result.AgentName, result.File)
+							// You can access result.Output here if needed for further processing/display
+							if result.Output != "" {
+								fmt.Printf("   Output: %s\n", result.Output) // Simple output display
+							}
 						}
-
-						// Specific logging/messaging for Ollama errors if detected
-						if ollamaHostErr {
-							fmt.Printf("🔌   Detail: Could not connect to Ollama host.\n")
-						}
-						if ollamaModelErr {
-							fmt.Printf("❓   Detail: Model '%s' not found by Ollama.\n", modelToUse)
-						}
-						if ollamaInvalidRespErr {
-							fmt.Printf("⁉️   Detail: Invalid response from Ollama.\n")
-						}
-						if ollamaBadReqErr {
-							fmt.Printf("🚫   Detail: Bad request sent to Ollama.\n")
-						}
-
-						fmt.Println("---") // Separator for agent errors
-						return        // Do not add result if agent returned an error
 					}
-
-					log.Info("Agent finished successfully", "agent", agentInstance.Name(), "file", result.File)
-					fmt.Printf("✅ %s analysis complete for %s.\n", result.AgentName, result.File)
-					fmt.Printf("\n📘 [%s] - Result from %s:\n%s\n---\n", result.File, result.AgentName, result.Output)
-
-					resultsMutex.Lock()
-					allResults = append(allResults, result)
-					resultsMutex.Unlock()
-
-				}(analysisCtx, agent, filePath, fileData) // Pass copies to goroutine
+					fmt.Println("---") // Separator for file results
+					return nil         // Return nil to allow other files to be processed even if some agents failed
+				})
 			}
-		}
 
-		wg.Wait()
-		log.Info("All agent analyses complete.")
-		fmt.Println("\n🏁 All analyses finished.")
-
-		if outputFile != "" {
-			// TODO: Implement Markdown report generation (Task 14)
-			log.Info("Output file specified, but report generation is not yet implemented.", "output_file", outputFile)
-			fmt.Printf("\n📋 Report generation to '%s' is not yet implemented.\n", outputFile)
-		} else {
-			// If no output file, results are already printed to console during processing.
-			if len(allResults) == 0 {
-				fmt.Println("No analysis results were generated.")
+			// Wait for all file processing goroutines to complete.
+			if err := g.Wait(); err != nil {
+				log.Error("Error occurred during concurrent file analysis", "error", err)
+				// This error is likely from a context cancellation or a returned error from a g.Go func
+				// if we choose to propagate them.
+				return fmt.Errorf("analysis group failed: %w", err)
 			}
-		}
 
-		return nil
-	},
-}
+			log.Info("All file analyses finished.")
+			fmt.Println("\nAll analyses finished.")
+			return nil
+		},
+	}
+)
 
 func init() {
 	rootCmd.AddCommand(analyzeCmd)
-	analyzeCmd.Flags().StringSliceVarP(&agentsToRun, "agents", "a", []string{}, "Comma-separated list of agent names to run (e.g., explain,smell)")
-	analyzeCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output Markdown file to save the analysis report")
-	analyzeCmd.Flags().StringVarP(&modelToUse, "model", "m", "", "AI model to use for analysis (overrides config default)")
+	analyzeCmd.Flags().StringSliceVarP(&agentNames, "agent", "a", []string{}, "Comma-separated list of agent names to run (e.g., explain,syntax). Runs all if empty.")
+	analyzeCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively search for files in directories.")
+	// cfgFile flag is added by rootCmd
 }

@@ -30,14 +30,14 @@ type Model struct {
 	errorStyle  lipgloss.Style
 	cfg         *config.AppConfig // Check this type if 'undefined' error persists
 	modelName   string
+	parentCtx   context.Context // Store the parent context
 	err         error
 	loading     bool
 	renderer    *glamour.TermRenderer // Moved renderer here
 	// Store chat history as a slice of strings or a more structured format
 	// For now, we'll just append to the viewport directly.
 }
-
-func InitialModel(cfg *config.AppConfig, modelName string) Model { // Check cfg type if 'undefined' error persists
+func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Send a message..."
 	ta.Focus()
@@ -69,6 +69,7 @@ func InitialModel(cfg *config.AppConfig, modelName string) Model { // Check cfg 
 		errorStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("1")),
 		cfg:         cfg,
 		modelName:   modelName,
+		parentCtx:   ctx, // Store the provided context
 		renderer:    renderer, // Initialize the renderer in our model
 		err:         nil,
 		loading:     false,
@@ -81,7 +82,11 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		// Use the parentCtx from the model, which should have AppConfig and Logger
+		// If parentCtx is nil, default to context.Background(), but this indicates a setup issue.
+		baseCtx := m.parentCtx
+		if baseCtx == nil { baseCtx = context.Background() }
+		ctx, cancel := context.WithTimeout(baseCtx, 60*time.Second)
 		defer cancel()
 
 		response, err := ollama.Query(ctx, m.cfg.OllamaHostURL, m.modelName, prompt)

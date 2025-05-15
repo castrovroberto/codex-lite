@@ -1,11 +1,12 @@
-// cmd/chat.go
 package cmd
 
 import (
+	// "context" // Will be used now
 	"fmt"
+	// "log/slog" // May become unused if log variable is not explicitly typed here
+	// "github.com/castrovroberto/codex-lite/internal/config" // May become unused
 
-	"github.com/castrovroberto/codex-lite/internal/config"
-	"github.com/castrovroberto/codex-lite/internal/logger"
+	"github.com/castrovroberto/codex-lite/internal/contextkeys"
 	"github.com/castrovroberto/codex-lite/internal/tui/chat"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -15,25 +16,33 @@ var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Launch an interactive codex lite session",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Config is loaded globally by rootCmd (e.g., in rootCmd's PersistentPreRunE or initConfig)
-		// So, config.Cfg should be populated by the time this RunE executes.
+		ctx := cmd.Context() // Get the context
+		log := contextkeys.LoggerFromContext(ctx)
+		appCfg := contextkeys.ConfigFromContext(ctx) // appCfg is config.AppConfig
 
 		modelToUse, _ := cmd.Flags().GetString("model")
 		if modelToUse == "" {
-			if config.Cfg.DefaultModel == "" { // Add a check in case DefaultModel itself is empty
-				logger.Get().Warn("Default model is not set in configuration, and no model specified via flag.")
-				// You might want to return an error here or use a hardcoded fallback
-				// For now, let it proceed, Ollama might have its own default or error out.
+			if appCfg.DefaultModel == "" {
+				log.Warn("Default model is not set in configuration, and no model specified via flag.")
 			}
-			modelToUse = config.Cfg.DefaultModel
+			modelToUse = appCfg.DefaultModel
 		}
 
-		// Corrected the constructor name and the config argument
-		chatModel := chat.InitialModel(&config.Cfg, modelToUse)
+		if modelToUse == "" {
+			log.Error("No model available for chat session. Please set a default model or use the --model flag.")
+			return fmt.Errorf("no model available for chat session")
+		}
+
+		log.Info("Starting chat session", "model", modelToUse, "ollama_host", appCfg.OllamaHostURL)
+
+		// Call chat.InitialModel with the context as the first argument
+		// The error message "want (context.Context, *config.AppConfig, string)" implies this is the expected signature
+		chatModel := chat.InitialModel(ctx, &appCfg, modelToUse) // Pass ctx, and address of appCfg
+
 		p := tea.NewProgram(chatModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 		if _, err := p.Run(); err != nil {
-			logger.Get().Error("Chat TUI failed", "error", err)
+			log.Error("Chat TUI failed", "error", err)
 			return fmt.Errorf("failed to run interactive chat session: %w", err)
 		}
 		return nil

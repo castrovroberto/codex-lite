@@ -7,10 +7,9 @@ import (
 	"strings"
 
 	"github.com/castrovroberto/codex-lite/internal/agents"
+	"github.com/castrovroberto/codex-lite/internal/config" // Added
 	"github.com/spf13/cobra"
 )
-
-var explainModelName string
 
 // explainCmd represents the explain command
 var explainCmd = &cobra.Command{
@@ -27,20 +26,28 @@ local LLM via Ollama, and prints the explanation of the code.`,
 			os.Exit(1)
 		}
 
+		// Use the model specified by flag, or fallback to the global default model
+		modelToUse, _ := cmd.Flags().GetString("model")
+		if modelToUse == "" {
+			modelToUse = config.Cfg.DefaultModel
+		}
+
 		// Create a basic context. Later, this context can be populated with loaded configurations.
 		ctx := context.Background()
 		agent := &agents.ExplainAgent{} // No model field needed here
-		result, err := agent.Analyze(ctx, explainModelName, filePath, string(data))
+		result, err := agent.Analyze(ctx, modelToUse, filePath, string(data))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error analyzing file with ExplainAgent: %v\n", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("\n📘 Explanation for %s (using %s):\n\n%s\n", result.File, explainModelName, strings.TrimSpace(result.Output))
+		fmt.Printf("\n📘 Explanation for %s (using %s):\n\n%s\n", result.File, modelToUse, strings.TrimSpace(result.Output))
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(explainCmd)
-	explainCmd.Flags().StringVarP(&explainModelName, "model", "m", "deepseek-coder-v2:16b", "Model to use for explanation")
+	// The default value for this flag will be empty, so Viper's default_model takes precedence unless specified.
+	explainCmd.Flags().StringP("model", "m", "", "Model to use for explanation (overrides default model)")
+	// No direct viper.BindPFlag here, as we handle fallback logic in Run
 }

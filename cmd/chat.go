@@ -2,53 +2,45 @@
 package cmd
 
 import (
-	"bufio"
 	// "context" // Removed: imported and not used
 	"fmt"
 	"os"
-	"strings"
+	// "strings" // No longer directly used here
 
+	"github.com/castrovroberto/codex-lite/internal/config" // Added
+	"github.com/castrovroberto/codex-lite/internal/tui/chat"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	// "github.com/castrovroberto/codex-lite/internal/ollama" // Commented out in original
 	// tea "github.com/charmbracelet/bubbletea" // Commented out in original
 	// "github.com/castrovroberto/codex-lite/internal/tui" // Commented out in original
 )
 
+// var chatModelName string // No longer needed as a package-level var
+
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Launch an interactive codex lite session",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Codex Lite interactive session. Type 'exit' to quit.")
-		// ollama.Hello() // Commented out in original
-		sessionLoop()
+		// Config is loaded globally by rootCmd
+		modelToUse, _ := cmd.Flags().GetString("model")
+		if modelToUse == "" {
+			modelToUse = config.Cfg.DefaultModel
+		}
+
+		// Pass the global config.Cfg to the TUI model constructor
+		chatModel := chat.NewModel(config.Cfg, modelToUse)
+		p := tea.NewProgram(chatModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
+
+		if _, err := p.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+			os.Exit(1)
+		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(chatCmd)
+	chatCmd.Flags().StringP("model", "m", "", "Model to use for the chat session (overrides default model)")
 }
-
-func sessionLoop() {
-	reader := bufio.NewReader(os.Stdin)
-	// var conversationHistory []string // Commented out in original
-
-	for {
-		fmt.Print("> ")
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-		// conversationHistory = append(conversationHistory, "User: "+input) // Commented out in original
-
-		if input == "exit" {
-			fmt.Println("Exiting...")
-			break
-		}
-
-		// Placeholder for processing the input and getting a response
-		// response := ollama.Send(input, conversationHistory) // Commented out in original
-		// conversationHistory = append(conversationHistory, "AI: "+response) // Commented out in original
-		// fmt.Println(response) // Commented out in original
-		fmt.Println("AI: Placeholder response to '" + input + "'") // Current placeholder
-	}
-}
-
 // func getCWD() string { ... } // Commented out in original

@@ -13,12 +13,7 @@ import (
 	"github.com/castrovroberto/codex-lite/internal/config" // Adjust path if needed
 )
 
-var (
-	// Flags for the analyze command
-	ollamaHost       string
-	modelName        string
-	selectedAgentsStr string // Comma-separated list of agent names
-)
+var selectedAgentsStr string // Comma-separated list of agent names
 
 // analyzeCmd represents the analyze command
 var analyzeCmd = &cobra.Command{
@@ -40,12 +35,15 @@ Example:
 			os.Exit(1)
 		}
 
-		// Setup AppConfig from flags
-		appConfiguration := config.AppConfig{
-			OllamaHostURL: ollamaHost,
-			// Add other global configs here if needed, e.g., appConfiguration.DefaultModel = modelName
+		// Config is already loaded globally by rootCmd's PersistentPreRunE
+		// ctx := config.NewContext(context.Background(), appConfiguration) // No longer needed
+		ctx := context.Background() // Use a standard background context
+
+		// Determine model to use: flag > global config
+		modelToUse, _ := cmd.Flags().GetString("model")
+		if modelToUse == "" {
+			modelToUse = config.Cfg.DefaultModel
 		}
-		ctx := config.NewContext(context.Background(), appConfiguration)
 
 		// Determine which agents to run
 		var agentsToRun []agents.Agent
@@ -79,14 +77,14 @@ Example:
 		}
 
 		fmt.Printf("Analyzing file: %s\n", filePath)
-		fmt.Printf("Using model: %s\n", modelName)
-		fmt.Printf("Ollama host: %s\n", appConfiguration.OllamaHostURL)
+		fmt.Printf("Using model: %s\n", modelToUse)
+		fmt.Printf("Ollama host: %s\n", config.Cfg.OllamaHostURL)
 		fmt.Println("---")
 
 		// Run selected agents
 		for _, agent := range agentsToRun {
 			fmt.Printf("🤖 Running %s...\n", agent.Name())
-			result, err := agent.Analyze(ctx, modelName, filePath, string(fileData))
+			result, err := agent.Analyze(ctx, modelToUse, filePath, string(fileData))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error during %s analysis: %v\n", agent.Name(), err)
 				fmt.Println("---")
@@ -101,8 +99,11 @@ Example:
 func init() {
 	rootCmd.AddCommand(analyzeCmd)
 
-	// Define flags for the analyze command
-	analyzeCmd.Flags().StringVar(&ollamaHost, "ollama-host", "http://localhost:11434", "Ollama host URL")
-	analyzeCmd.Flags().StringVarP(&modelName, "model", "m", "deepseek-coder-v2-lite", "Model name to use for analysis")
+	// Flags for analyze command. These will override global settings if provided.
+	// No need to bind ollama-host-url here if it's a persistent flag on root.
+	// If you want analyze to have its own ollama-host distinct from global:
+	// analyzeCmd.Flags().String("ollama-host-url", "", "Ollama host URL for this analysis")
+	// viper.BindPFlag("ollama_host_url_analyze", analyzeCmd.Flags().Lookup("ollama-host-url")) // Use a distinct key
+	analyzeCmd.Flags().StringP("model", "m", "", "Model name to use for analysis (overrides default model)")
 	analyzeCmd.Flags().StringVarP(&selectedAgentsStr, "agents", "a", "explain,syntax", "Comma-separated list of agents to run (e.g., explain,syntax)")
 }

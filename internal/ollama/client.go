@@ -22,7 +22,7 @@ func Query(model, prompt string) (string, error) {
         Prompt: prompt,
         Stream: false,
     })
-    resp, err := http.Post("http://localhost:11434/api/generate", "application/json", bytes.NewBuffer(body))
+    resp, err := http.Post("http://192.168.0.15:11434/api/generate", "application/json", bytes.NewBuffer(body))
     if err != nil {
         return "", err
     }

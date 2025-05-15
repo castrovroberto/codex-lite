@@ -39,5 +39,5 @@ local LLM via Ollama, and prints the explanation of the code.`,
 
 func init() {
 	rootCmd.AddCommand(explainCmd)
-	explainCmd.Flags().StringVarP(&explainModelName, "model", "m", "deepseek-coder-v2-lite", "Model to use for explanation")
+	explainCmd.Flags().StringVarP(&explainModelName, "model", "m", "deepseek-coder-v2:16b", "Model to use for explanation")
 }

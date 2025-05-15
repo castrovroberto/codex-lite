@@ -32,15 +32,3 @@ indicate their location (e.g., line number):\n\n%s`, getFileExtension(path), cod
 		Agent:  a.Name(),
 	}, nil
 }
-
-// Helper function to get the file extension (for better prompting)
-func getFileExtension(filename string) string {
-	// This is a basic implementation.  For more robust extension handling,
-	// you might want to use the "path/filepath" package.
-	for i := len(filename) - 1; i >= 0; i-- {
-		if filename[i] == '.' {
-			return filename[i+1:]
-		}
-	}
-	return "" // No extension found
-}

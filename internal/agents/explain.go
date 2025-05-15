@@ -1,20 +1,18 @@
-// internal/agents/explain.go
+// internal/agents/explain_agent.go
 package agents
 
 import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings" // For strings.TrimSpace
+	"strings"       // For strings.TrimSpace
 	"text/template"
 
 	"github.com/castrovroberto/codex-lite/internal/config"
 	"github.com/castrovroberto/codex-lite/internal/ollama"
 )
 
-type ExplainAgent struct {
-	// Model field removed, modelName passed to Analyze
-}
+type ExplainAgent struct{}
 
 func (a *ExplainAgent) Name() string {
 	return "ExplainAgent"
@@ -41,9 +39,9 @@ func (a *ExplainAgent) Analyze(ctx context.Context, modelName string, path strin
 		return Result{}, fmt.Errorf("ExplainAgent: failed to parse prompt template: %w", err)
 	}
 
-	fileExt := getFileExtension(path) // Assumes getFileExtension is in this package
+	fileExt := getFileExtension(path) // Uses the function from utils.go
 	if fileExt == "" {
-		fileExt = "text" // Default if extension is unknown
+		fileExt = "text" // Fallback
 	}
 
 	data := ExplainPromptData{

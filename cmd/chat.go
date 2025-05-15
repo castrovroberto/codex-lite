@@ -2,40 +2,37 @@
 package cmd
 
 import (
-	// "context" // Removed: imported and not used
 	"fmt"
-	// "os"
-	// "strings" // No longer directly used here
 
-	"github.com/castrovroberto/codex-lite/internal/config" // Added
-	"github.com/castrovroberto/codex-lite/internal/logger" // Added
+	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/logger"
 	"github.com/castrovroberto/codex-lite/internal/tui/chat"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	// "github.com/castrovroberto/codex-lite/internal/ollama" // Commented out in original
-	// tea "github.com/charmbracelet/bubbletea" // Commented out in original
-	// "github.com/castrovroberto/codex-lite/internal/tui" // Commented out in original
 )
-
-// var chatModelName string // No longer needed as a package-level var
 
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Launch an interactive codex lite session",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Config is loaded globally by rootCmd
+		// Config is loaded globally by rootCmd (e.g., in rootCmd's PersistentPreRunE or initConfig)
+		// So, config.Cfg should be populated by the time this RunE executes.
+
 		modelToUse, _ := cmd.Flags().GetString("model")
 		if modelToUse == "" {
+			if config.Cfg.DefaultModel == "" { // Add a check in case DefaultModel itself is empty
+				logger.Get().Warn("Default model is not set in configuration, and no model specified via flag.")
+				// You might want to return an error here or use a hardcoded fallback
+				// For now, let it proceed, Ollama might have its own default or error out.
+			}
 			modelToUse = config.Cfg.DefaultModel
 		}
 
-		// Pass the global config.Cfg to the TUI model constructor
-		chatModel := chat.NewModel(config.Cfg, modelToUse)
+		// Corrected the constructor name and the config argument
+		chatModel := chat.InitialModel(&config.Cfg, modelToUse)
 		p := tea.NewProgram(chatModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 		if _, err := p.Run(); err != nil {
-			// Bubbletea errors are often not great for direct user display without context.
-			// Logging it is good. Returning a simpler error might be better for the user.
 			logger.Get().Error("Chat TUI failed", "error", err)
 			return fmt.Errorf("failed to run interactive chat session: %w", err)
 		}
@@ -45,6 +42,5 @@ var chatCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(chatCmd)
-	chatCmd.Flags().StringP("model", "m", "", "Model to use for the chat session (overrides default model)")
+	chatCmd.Flags().StringP("model", "m", "", "Model to use for the chat session (overrides default model in config)")
 }
-// func getCWD() string { ... } // Commented out in original

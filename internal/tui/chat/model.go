@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/config" // Ensure this path and package are correct
 	"github.com/castrovroberto/codex-lite/internal/ollama"
 )
 
@@ -28,48 +28,48 @@ type Model struct {
 	textarea    textarea.Model
 	senderStyle lipgloss.Style
 	errorStyle  lipgloss.Style
-	cfg         *config.Config
+	cfg         *config.AppConfig // Check this type if 'undefined' error persists
 	modelName   string
 	err         error
 	loading     bool
+	renderer    *glamour.TermRenderer // Moved renderer here
 	// Store chat history as a slice of strings or a more structured format
 	// For now, we'll just append to the viewport directly.
 }
 
-func InitialModel(cfg *config.Config, modelName string) Model {
+func InitialModel(cfg *config.AppConfig, modelName string) Model { // Check cfg type if 'undefined' error persists
 	ta := textarea.New()
 	ta.Placeholder = "Send a message..."
 	ta.Focus()
 
 	ta.Prompt = "┃ "
-	ta.CharLimit = 280 // Example limit
+	ta.CharLimit = 280
 
-	ta.SetWidth(50) // Example width
-	ta.SetHeight(1) // Single line input
+	ta.SetWidth(50)
+	ta.SetHeight(1)
 
-	// Remove borders for a cleaner look
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.ShowLineNumbers = false
 
-	vp := viewport.New(50, 10) // Example dimensions
+	vp := viewport.New(50, 10)
 	// Use a glamour renderer for markdown
 	renderer, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(vp.Width),
+		glamour.WithWordWrap(vp.Width), // Initial word wrap based on viewport width
 	)
 	vp.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
 
-	// Store the renderer in the viewport's UserData to access it later
 	vp.SetContent("Welcome to Codex Lite Chat! Type your message and press Enter.")
-	vp.UserData = renderer
+	// vp.UserData = renderer // Removed: UserData is not a field of viewport.Model
 
 	return Model{
 		textarea:    ta,
 		viewport:    vp,
-		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("5")),  // Purple
-		errorStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("1")),  // Red
+		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
+		errorStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("1")),
 		cfg:         cfg,
 		modelName:   modelName,
+		renderer:    renderer, // Initialize the renderer in our model
 		err:         nil,
 		loading:     false,
 	}
@@ -79,14 +79,11 @@ func (m Model) Init() tea.Cmd {
 	return textarea.Blink
 }
 
-// fetchOllamaResponse is a tea.Cmd that calls the Ollama API
 func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
 	return func() tea.Msg {
-		// Use a context with a timeout for the Ollama call
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // Increased timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		// Pass the context to the Ollama query
 		response, err := ollama.Query(ctx, m.cfg.OllamaHostURL, m.modelName, prompt)
 		if err != nil {
 			return ollamaErrorMsg(fmt.Errorf("Ollama query failed: %w", err))
@@ -111,7 +108,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fmt.Println(m.textarea.Value())
 			return m, tea.Quit
 		case tea.KeyEnter:
-			if m.loading { // Don't send if already loading
+			if m.loading {
 				return m, nil
 			}
 			userInput := strings.TrimSpace(m.textarea.Value())
@@ -119,41 +116,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Append user message to viewport
 			userMessage := m.senderStyle.Render("You: ") + userInput
-			m.appendToViewport(userMessage)
+			m.appendToViewport(userMessage, false) // User messages are not markdown from bot
 
 			m.textarea.Reset()
 			m.viewport.GotoBottom()
-			m.loading = true // Set loading state
-			// Add a "Bot is thinking..." message
-			m.appendToViewport("Bot: Thinking...")
+			m.loading = true
+			m.appendToViewport("Bot: Thinking...", false) // Not markdown
 			m.viewport.GotoBottom()
 
 			return m, m.fetchOllamaResponse(userInput)
 		}
 
 	case ollamaResponseMsg:
-		m.loading = false // Reset loading state
-		// Remove the "Bot: Thinking..." message by replacing the last line
-		// This is a simplistic way; a more robust way would be to manage messages in a slice.
-		lines := strings.Split(m.viewport.View(), "\n")
-		if len(lines) > 0 && strings.HasPrefix(lines[len(lines)-1], "Bot: Thinking...") {
-			// Reconstruct content without the last "Thinking..." line
-			// This is still tricky because viewport content might not be raw lines.
-			// For now, we'll just append, and the "Thinking" message will remain.
-			// A better approach is needed for dynamic message replacement.
-		}
-
+		m.loading = false
+		// Simplistic removal of "Thinking..." - consider better state management for messages
+		// For now, we will just append. A robust solution would edit the message list.
 		botResponse := "Bot: " + string(msg)
-		m.appendToViewport(botResponse)
+		m.appendToViewport(botResponse, true) // Bot messages are markdown
 		m.viewport.GotoBottom()
 		return m, nil
 
 	case ollamaErrorMsg:
-		m.loading = false // Reset loading state
+		m.loading = false
 		errorMsg := m.errorStyle.Render(fmt.Sprintf("Error: %v", msg))
-		m.appendToViewport(errorMsg)
+		m.appendToViewport(errorMsg, false) // Not markdown
 		m.viewport.GotoBottom()
 		return m, nil
 
@@ -163,15 +150,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.viewport.Width = msg.Width
-		m.viewport.Height = msg.Height - m.textarea.Height() - 1 // Adjust for textarea and a potential status line
+		m.viewport.Height = msg.Height - m.textarea.Height() - 1
 		m.textarea.SetWidth(msg.Width)
-		// Re-render content with new width if using markdown
-		if renderer, ok := m.viewport.UserData.(*glamour.TermRenderer); ok {
-			// This assumes you have access to the original raw content.
-			// For simplicity, we might need to re-fetch or re-format the whole chat history
-			// if dynamic re-wrapping of markdown is crucial on resize.
-			// For now, existing content might not perfectly re-wrap.
-			_ = renderer // Avoid unused variable if not fully implemented
+
+		// Update glamour renderer's word wrap width
+		if m.renderer != nil {
+			// This recreates the renderer; glamour might not support dynamic width changes easily.
+			// Or, you might need to re-render existing content if it stores raw markdown.
+			newRenderer, _ := glamour.NewTermRenderer(
+				glamour.WithAutoStyle(),
+				glamour.WithWordWrap(m.viewport.Width), // Use new viewport width
+			)
+			m.renderer = newRenderer
+			// Note: Existing content in the viewport won't automatically re-wrap with just this.
+			// You'd need to re-process and SetContent with the re-rendered markdown.
+			// This is a complex UI feature usually requiring storing all raw messages.
 		}
 		return m, nil
 	}
@@ -179,27 +172,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(tiCmd, vpCmd)
 }
 
-func (m *Model) appendToViewport(content string) {
+// appendToViewport now takes a flag to indicate if content is markdown
+func (m *Model) appendToViewport(content string, isMarkdown bool) {
 	currentContent := m.viewport.View()
 	if currentContent != "" && !strings.HasSuffix(currentContent, "\n") {
 		currentContent += "\n"
 	}
-	// Attempt to render with glamour if it's a bot response
-	// This is a heuristic; you might need a more robust way to distinguish
-	if strings.HasPrefix(content, "Bot: ") {
-		if renderer, ok := m.viewport.UserData.(*glamour.TermRenderer); ok {
-			rawBotMessage := strings.TrimPrefix(content, "Bot: ")
-			renderedOutput, err := renderer.Render(rawBotMessage)
-			if err == nil {
-				content = "Bot: " + strings.TrimSpace(renderedOutput)
-			} else {
-				// Fallback to plain text if rendering fails
-				content = "Bot: " + rawBotMessage
-			}
+
+	finalContent := content
+	if isMarkdown && m.renderer != nil && strings.HasPrefix(content, "Bot: ") {
+		rawBotMessage := strings.TrimPrefix(content, "Bot: ")
+		renderedOutput, err := m.renderer.Render(rawBotMessage)
+		if err == nil {
+			finalContent = "Bot: " + strings.TrimSpace(renderedOutput)
+		} else {
+			// Fallback to plain text if rendering fails
+			finalContent = "Bot: " + rawBotMessage
 		}
 	}
 
-	m.viewport.SetContent(currentContent + content)
+	m.viewport.SetContent(currentContent + finalContent)
 	m.viewport.GotoBottom()
 }
 
@@ -207,16 +199,15 @@ func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("An error occurred: %v\nPress Esc or Ctrl+C to quit.", m.err)
 	}
-	// Add a loading indicator if a response is being fetched
 	loadingIndicator := ""
 	if m.loading {
 		loadingIndicator = " (loading...)"
 	}
 
 	return fmt.Sprintf(
-		"%s\n\n%s%s", // Added an extra newline for spacing
+		"%s\n\n%s%s",
 		m.viewport.View(),
 		m.textarea.View(),
 		loadingIndicator,
-	) + "\n" // Ensure a final newline for better prompt display
+	) + "\n"
 }

@@ -1,45 +1,50 @@
 package cmd
 
 import (
-	// "context" // Will be used now
+	//"context"
+	"errors"
 	"fmt"
-	// "log/slog" // May become unused if log variable is not explicitly typed here
-	// "github.com/castrovroberto/codex-lite/internal/config" // May become unused
 
+	// Import slog for fallback logger
+	// Needed for fallback logger
+
+	//"github.com/castrovroberto/codex-lite/internal/config"
 	"github.com/castrovroberto/codex-lite/internal/contextkeys"
+	"github.com/castrovroberto/codex-lite/internal/logger"
 	"github.com/castrovroberto/codex-lite/internal/tui/chat"
+
+	//"github.com/castrovroberto/codex-lite/internal/tui/chat"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
 var chatCmd = &cobra.Command{
 	Use:   "chat",
-	Short: "Launch an interactive codex lite session",
+	Short: "Start an interactive chat session with an LLM",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context() // Get the context
-		log := contextkeys.LoggerFromContext(ctx)
-		appCfg := contextkeys.ConfigFromContext(ctx) // appCfg is config.AppConfig
+		// Config and Logger are loaded and set in context by rootCmd.PersistentPreRunE
+		// We can retrieve config from context, but let's rely on the global logger
+		// which is guaranteed to be initialized by PersistentPreRunE.
+		appCfg := contextkeys.ConfigFromContext(cmd.Context())
+		log := logger.Get() // Get the global logger, initialized by PersistentPreRunE
 
-		modelToUse, _ := cmd.Flags().GetString("model")
-		if modelToUse == "" {
-			if appCfg.DefaultModel == "" {
-				log.Warn("Default model is not set in configuration, and no model specified via flag.")
-			}
-			modelToUse = appCfg.DefaultModel
+		// Get model name for chat (from flag or config)
+		chatModelName, _ := cmd.Flags().GetString("model")
+		if chatModelName == "" {
+			chatModelName = appCfg.DefaultModel
 		}
-
-		if modelToUse == "" {
-			log.Error("No model available for chat session. Please set a default model or use the --model flag.")
-			return fmt.Errorf("no model available for chat session")
+		if chatModelName == "" {
+			log.Error("No model specified for chat and no default model configured.")
+			return errors.New("chat model not specified")
 		}
+		log.Info("Starting chat session", "model", chatModelName)
 
-		log.Info("Starting chat session", "model", modelToUse, "ollama_host", appCfg.OllamaHostURL)
+		// Pass the context (which contains config and logger) to InitialModel
+		// Note: InitialModel now takes ctx as the first argument
+		chatAppModel := chat.InitialModel(cmd.Context(), &appCfg, chatModelName)
 
-		// Call chat.InitialModel with the context as the first argument
-		// The error message "want (context.Context, *config.AppConfig, string)" implies this is the expected signature
-		chatModel := chat.InitialModel(ctx, &appCfg, modelToUse) // Pass ctx, and address of appCfg
-
-		p := tea.NewProgram(chatModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
+		// Create and run the Bubble Tea program
+		p := tea.NewProgram(chatAppModel, tea.WithAltScreen()) // Use tea alias
 
 		if _, err := p.Run(); err != nil {
 			log.Error("Chat TUI failed", "error", err)
@@ -50,6 +55,13 @@ var chatCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(chatCmd)
+	// Define flags here. Do NOT access config from context in init().
+	// The 'model' flag value will be read in RunE.
 	chatCmd.Flags().StringP("model", "m", "", "Model to use for the chat session (overrides default model in config)")
+	// chatSession and disablePrettyPrint flags were in the provided chat.go snippet,
+	// but are not used in the RunE logic provided. Commenting them out for now.
+	// chatCmd.Flags().StringVarP(&chatSession, "session", "s", "", "Session ID to continue a previous chat")
+	// chatCmd.Flags().BoolVarP(&disablePrettyPrint, "disable-pretty-print", "d", false, "Disable pretty printing of output")
+
+	rootCmd.AddCommand(chatCmd)
 }

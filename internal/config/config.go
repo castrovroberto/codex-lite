@@ -13,11 +13,13 @@ import (
 
 // AppConfig holds the application's global configuration.
 type AppConfig struct {
-	DefaultModel         string        `mapstructure:"default_model"`
-	LogLevel             string        `mapstructure:"log_level"`
-	OllamaHostURL        string        `mapstructure:"ollama_host_url"`
-	OllamaRequestTimeout time.Duration `mapstructure:"ollama_request_timeout"`
-	OllamaKeepAlive      string        `mapstructure:"ollama_keep_alive"`
+	DefaultModel           string        `mapstructure:"default_model"`
+	LogLevel               string        `mapstructure:"log_level"`
+	OllamaHostURL          string        `mapstructure:"ollama_host_url"`
+	OllamaRequestTimeout   time.Duration `mapstructure:"ollama_request_timeout"`
+	OllamaKeepAlive        string        `mapstructure:"ollama_keep_alive"`
+	MaxConcurrentAnalyzers int           `mapstructure:"max_concurrent_analyzers"`
+
 	// Add other global settings here
 }
 
@@ -56,8 +58,8 @@ func LoadConfig(cfgFile string) error {
 				viper.AddConfigPath(filepath.Join(home, ".codex-lite")) // ~/.codex-lite/config.yaml
 				viper.AddConfigPath(home)                               // ~/.codex-lite.yaml
 			}
-			viper.AddConfigPath(".")    // ./config.yaml or ./.codex-lite.yaml
-			viper.SetConfigName("config") // Default config file name (config.yaml, config.json etc.)
+			viper.AddConfigPath(".")           // ./config.yaml or ./.codex-lite.yaml
+			viper.SetConfigName("config")      // Default config file name (config.yaml, config.json etc.)
 			viper.AddConfigPath(".codex-lite") // ./.codex-lite/config.yaml
 			viper.SetConfigName(".codex-lite") // .codex-lite.yaml
 		}
@@ -69,7 +71,6 @@ func LoadConfig(cfgFile string) error {
 		_ = viper.BindEnv("ollama_host_url", "CODEXLITE_OLLAMA_HOST_URL")
 		_ = viper.BindEnv("ollama_request_timeout", "CODEXLITE_OLLAMA_REQUEST_TIMEOUT")
 		_ = viper.BindEnv("ollama_keep_alive", "CODEXLITE_OLLAMA_KEEP_ALIVE")
-
 
 		// Attempt to read the configuration file.
 		if err := viper.ReadInConfig(); err != nil {

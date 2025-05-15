@@ -7,7 +7,8 @@ import (
 	"strings"
 
 	"github.com/castrovroberto/codex-lite/internal/agents"
-	"github.com/castrovroberto/codex-lite/internal/config" // Added
+	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/logger" // Added
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +23,7 @@ local LLM via Ollama, and prints the explanation of the code.`,
 		filePath := args[0]
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filePath, err)
+			logger.Get().Error("Error reading file", "path", filePath, "error", err)
 			os.Exit(1)
 		}
 
@@ -37,11 +38,13 @@ local LLM via Ollama, and prints the explanation of the code.`,
 		agent := &agents.ExplainAgent{} // No model field needed here
 		result, err := agent.Analyze(ctx, modelToUse, filePath, string(data))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error analyzing file with ExplainAgent: %v\n", err)
+			logger.Get().Error("Error analyzing file with ExplainAgent", "error", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("\n📘 Explanation for %s (using %s):\n\n%s\n", result.File, modelToUse, strings.TrimSpace(result.Output))
+		// For user-facing output, fmt.Printf is still appropriate. Logger is for app logs.
+		logger.Get().Info("Successfully explained file", "path", result.File, "model", modelToUse)
+		fmt.Printf("\n📘 Explanation for %s (using %s):\n\n%s\n", result.File, modelToUse, strings.TrimSpace(result.Output)) // User output
 	},
 }
 

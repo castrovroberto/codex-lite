@@ -3,11 +3,12 @@ package cmd
 
 import (
 	// "context" // Removed: imported and not used
-	"fmt"
+	// "fmt"
 	"os"
 	// "strings" // No longer directly used here
 
 	"github.com/castrovroberto/codex-lite/internal/config" // Added
+	"github.com/castrovroberto/codex-lite/internal/logger" // Added
 	"github.com/castrovroberto/codex-lite/internal/tui/chat"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -33,7 +34,7 @@ var chatCmd = &cobra.Command{
 		p := tea.NewProgram(chatModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 		if _, err := p.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+			logger.Get().Error("Error running chat TUI", "error", err)
 			os.Exit(1)
 		}
 	},

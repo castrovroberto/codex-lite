@@ -1,5 +1,5 @@
 /*
-Copyright © 2025 NAME HERE <EMAIL ADDRESS>
+Copyright © 2024 Roberto Castro roberto.castro@example.com
 
 */
 package cmd
@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/config" // Assuming this path is correct
+	"github.com/castrovroberto/codex-lite/internal/logger" // New import
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -36,6 +37,7 @@ to quickly create a Cobra application.`,
 		if err := config.LoadConfig(cfgFile); err != nil {
 			return fmt.Errorf("failed to load configuration: %w", err)
 		}
+		logger.InitLogger(config.Cfg.LogLevel) // Initialize logger after config is loaded
 		return nil
 	},
 }
@@ -57,4 +59,6 @@ func init() {
 	viper.BindPFlag("ollama_host_url", rootCmd.PersistentFlags().Lookup("ollama-host-url"))
 	rootCmd.PersistentFlags().String("default-model", "", "Default LLM model name")
 	viper.BindPFlag("default_model", rootCmd.PersistentFlags().Lookup("default-model"))
+	rootCmd.PersistentFlags().StringSlice("default-agent-list", []string{}, "Default comma-separated list of agents (overrides config if set, e.g., explain,syntax)")
+	viper.BindPFlag("default_agent_list", rootCmd.PersistentFlags().Lookup("default-agent-list"))
 }

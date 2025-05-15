@@ -18,6 +18,7 @@ type AppConfig struct {
 	DefaultModel        string        `mapstructure:"default_model"`
 	LogLevel            string        `mapstructure:"log_level"`
 	OllamaRequestTimeout time.Duration `mapstructure:"ollama_request_timeout"`
+	DefaultAgentList    []string      `mapstructure:"default_agent_list"`
 }
 
 // Cfg is the global application configuration.
@@ -31,6 +32,7 @@ func LoadConfig(cfgFile string) error {
 	viper.SetDefault("default_model", "deepseek-coder-v2:lite")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("ollama_request_timeout", 60*time.Second) // Increased default timeout
+	viper.SetDefault("default_agent_list", []string{"explain", "syntax"})
 
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile) // Use config file from the flag.

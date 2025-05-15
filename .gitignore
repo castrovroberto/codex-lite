@@ -23,6 +23,7 @@ go.work.sum
 
 # env file
 .env
+.codex-lite.yaml
 
 # project files
 project/

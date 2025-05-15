@@ -56,7 +56,7 @@ func (a *SyntaxAgent) Analyze(ctx context.Context, modelName string, path string
 		return Result{}, fmt.Errorf("SyntaxAgent: failed to execute syntax prompt template: %w", err)
 	}
 
-	response, err := ollama.Query(appCfg.OllamaHostURL, modelName, promptBuf.String())
+	response, err := ollama.Query(ctx, appCfg.OllamaHostURL, modelName, promptBuf.String())
 	if err != nil {
 		return Result{}, fmt.Errorf("SyntaxAgent: error from Ollama: %w", err)
 	}

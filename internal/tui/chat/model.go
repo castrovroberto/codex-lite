@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/castrovroberto/codex-lite/internal/config" // Added
 	"github.com/castrovroberto/codex-lite/internal/ollama"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -38,12 +39,13 @@ type Model struct {
 	Error           error
 	Cwd             string
 	OllamaModelName string
+	OllamaHostURL   string // Added
 	IsLoading       bool
 	width           int
 	height          int
 }
 
-func NewInitialModel(cwd, ollamaModelName string) Model {
+func NewInitialModel(cwd, ollamaModelName, ollamaHostURL string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Type your prompt... (Ctrl+C to quit)"
 	ti.Focus()
@@ -64,6 +66,7 @@ func NewInitialModel(cwd, ollamaModelName string) Model {
 		Spinner:         s,
 		Cwd:             cwd,
 		OllamaModelName: ollamaModelName,
+		OllamaHostURL:   ollamaHostURL, // Added
 		IsLoading:       false,
 	}
 }
@@ -93,7 +96,7 @@ func (m Model) makeOllamaQueryCmd(prompt string) tea.Cmd {
 		
 		fullPrompt := history.String() + "User: " + prompt
 
-		response, err := ollama.Query(m.OllamaModelName, fullPrompt)
+		response, err := ollama.Query(m.OllamaHostURL, m.OllamaModelName, fullPrompt)
 		if err != nil {
 			return errMsg(err)
 		}

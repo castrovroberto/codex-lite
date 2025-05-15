@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -26,8 +27,10 @@ local LLM via Ollama, and prints the explanation of the code.`,
 			os.Exit(1)
 		}
 
-		agent := &agents.ExplainAgent{Model: explainModelName}
-		result, err := agent.Analyze(filePath, string(data))
+		// Create a basic context. Later, this context can be populated with loaded configurations.
+		ctx := context.Background()
+		agent := &agents.ExplainAgent{} // No model field needed here
+		result, err := agent.Analyze(ctx, explainModelName, filePath, string(data))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error analyzing file with ExplainAgent: %v\n", err)
 			os.Exit(1)

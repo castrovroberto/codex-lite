@@ -16,19 +16,26 @@ type Response struct {
     Response string `json:"response"`
 }
 
-func Query(model, prompt string) (string, error) {
-    body, _ := json.Marshal(Request{
-        Model:  model,
+func Query(ollamaHostURL string, modelName string, prompt string) (string, error) {
+    reqBody := Request{
+        Model:  modelName,
         Prompt: prompt,
         Stream: false,
-    })
-    resp, err := http.Post("http://192.168.0.15:11434/api/generate", "application/json", bytes.NewBuffer(body))
+    }
+    body, err := json.Marshal(reqBody)
+    if err != nil {
+        return "", fmt.Errorf("failed to marshal ollama request: %w", err)
+    }
+
+    resp, err := http.Post(fmt.Sprintf("%s/api/generate", ollamaHostURL), "application/json", bytes.NewBuffer(body))
     if err != nil {
         return "", err
     }
     defer resp.Body.Close()
 
     var result Response
-    json.NewDecoder(resp.Body).Decode(&result)
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        return "", fmt.Errorf("failed to decode ollama response: %w", err)
+    }
     return result.Response, nil
 }

@@ -1,12 +1,10 @@
 package agents
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"github.com/castrovroberto/codex-lite/internal/config"
 	"github.com/castrovroberto/codex-lite/internal/ollama"
-	"text/template"
+	"strings"
 )
 
 type ExplainAgent struct {
@@ -18,8 +16,9 @@ func (a *ExplainAgent) Name() string {
 }
 
 func (a *ExplainAgent) Analyze(ctx context.Context, modelName string, path string, code string) (Result, error) {
-	appCfg := config.FromContext(ctx)
-	prompt := fmt.Sprintf("Explain the purpose of the following %s code. Format the output as Markdown:\n\n```%s\n%s\n```", getFileExtension(path), getFileExtension(path), code)
-	response, err := ollama.Query(appCfg.OllamaHostURL, modelName, prompt)
-	return Result{File: path, Output: response, Agent: a.Name()}, err
+	prompt := fmt.Sprintf("Explain the purpose of the following %s code. Format the output as Markdown:\n\n```%s\n%s\n```", getFileExtension(path), getFileExtension(path), code)	
+	// TODO: Implement call to Ollama or other LLM service
+	explanation := "Explanation of the code goes here. This is currently a placeholder."	
+	// For now, return a placeholder result
+	return Result{File: path, Output: strings.TrimSpace(explanation), Agent: a.Name()}, nil
 }

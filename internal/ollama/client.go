@@ -1,41 +1,60 @@
+// internal/ollama/client.go
 package ollama
 
 import (
-    "bytes"
-    "encoding/json"
-    "net/http"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
 )
 
 type Request struct {
-    Model  string `json:"model"`
-    Prompt string `json:"prompt"`
-    Stream bool   `json:"stream"`
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	Stream bool   `json:"stream"`
 }
 
 type Response struct {
-    Response string `json:"response"`
+	Response string `json:"response"`
 }
 
-func Query(ollamaHostURL string, modelName string, prompt string) (string, error) {
-    reqBody := Request{
-        Model:  modelName,
-        Prompt: prompt,
-        Stream: false,
-    }
-    body, err := json.Marshal(reqBody)
-    if err != nil {
-        return "", fmt.Errorf("failed to marshal ollama request: %w", err)
-    }
+// Query sends a request to the specified Ollama host.
+func Query(hostURL, model, prompt string) (string, error) {
+	requestBody := Request{
+		Model:  model,
+		Prompt: prompt,
+		Stream: false,
+	}
 
-    resp, err := http.Post(fmt.Sprintf("%s/api/generate", ollamaHostURL), "application/json", bytes.NewBuffer(body))
-    if err != nil {
-        return "", err
-    }
-    defer resp.Body.Close()
+	bodyBytes, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("ollama: failed to marshal request: %w", err)
+	}
 
-    var result Response
-    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-        return "", fmt.Errorf("failed to decode ollama response: %w", err)
-    }
-    return result.Response, nil
+	// Ensure hostURL has a scheme and ends with /api/generate
+	if !strings.HasPrefix(hostURL, "http://") && !strings.HasPrefix(hostURL, "https://") {
+		hostURL = "http://" + hostURL // Default to http if no scheme
+	}
+	url := strings.TrimSuffix(hostURL, "/") + "/api/generate"
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("ollama: failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		// Attempt to read error body if any for more context
+		var errorBody bytes.Buffer
+		_, _ = errorBody.ReadFrom(resp.Body) // Ignore error from reading error body itself
+		return "", fmt.Errorf("ollama: received non-OK HTTP status %d: %s", resp.StatusCode, errorBody.String())
+	}
+
+	var result Response
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("ollama: failed to decode response: %w", err)
+	}
+
+	return result.Response, nil
 }

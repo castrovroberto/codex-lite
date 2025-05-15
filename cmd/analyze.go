@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	// Added as per previous diff, anticipating Task 12
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 
@@ -58,40 +59,6 @@ Use --recursive to scan directories.`,
 			log.Debug("Loaded configuration from context", "ollama_host", appCfg.OllamaHostURL, "default_model", appCfg.DefaultModel)
 
 			ctxWithValues := cmd.Context() // The command's context already has the values
-
-			// ... (rest of your agent initialization and selection logic) ...
-			// (Make sure to use 'log' and 'appCfg' that are now validated)
-
-			// ... (inside the g.Go(func() error { ... }) goroutine) ...
-			// results, orchErr := agentOrchestrator.RunAgents(analysisCtx, agentsToRun, filePath, string(fileContentBytes))
-			// ...
-			// for _, result := range results {
-			// 	if result.Error != nil {
-			// 		var agentErr *agents.AgentError
-			// 		if errors.As(result.Error, &agentErr) {
-			// 			// ...
-			// 		} else if errors.Is(result.Error, ollama.ErrOllamaHostUnreachable) {
-			// 			// ...
-			// 		} else if errors.Is(result.Error, ollama.ErrOllamaModelNotFound) {
-			// 			// Use appCfg captured from the RunE scope.
-			// 			// ConfigFromContext(analysisCtx) would return the same struct value.
-			// 			modelUsed := appCfg.DefaultModel
-			// 			if modelUsed == "" {
-			// 				// This case should ideally not be hit if the initial check for appCfg.OllamaHost passed
-			// 				// and DefaultConfig always sets a DefaultModel. This is a defensive fallback.
-			// 				gLog.Warn("DefaultModel in AppConfig is empty, which is unexpected.", "file", result.File)
-			// 				modelUsed = "[model_name_unavailable]"
-			// 			}
-			// 			gLog.Error("Ollama model not found", "agent_name", result.AgentName, "file", result.File, "error", result.Error, "model_used", modelUsed)
-			// 			fmt.Printf("⚠️ Error with %s on %s: The model '%s' was not found by Ollama: %v\n", result.AgentName, result.File, modelUsed, result.Error)
-			// 		} else {
-			// 			// ...
-			// 		}
-			// 	} else {
-			// 		// ...
-			// 	}
-			// }
-			// ... (rest of the goroutine) ...
 
 			// The rest of your RunE function...
 			// Initialize and register agents with the orchestrator
@@ -148,10 +115,28 @@ Use --recursive to scan directories.`,
 					if statErr == nil && info.IsDir() {
 						err := filepath.WalkDir(pattern, func(path string, d os.DirEntry, err error) error {
 							if err != nil {
-								log.Warn("Error accessing path during walk", "path", path, "error", err)
-								return filepath.SkipDir
+								// Log and continue if possible, or return err to stop
+								log.Warn("Error accessing path, skipping", "path", path, "error", err)
+								return nil // or return err if you want to stop walking on any error
+							}
+
+							if d.IsDir() {
+								// Normalize directory name to lowercase for case-insensitive comparison
+								dirName := strings.ToLower(d.Name())
+								// Skip common VCS, build, and dependency directories
+								if dirName == ".git" || dirName == ".svn" || dirName == ".hg" || dirName == ".bzr" ||
+									dirName == "vendor" || dirName == "node_modules" ||
+									dirName == "target" || dirName == "dist" || dirName == "build" {
+									log.Debug("Skipping directory", "path", path, "reason", "standard skip list")
+									return filepath.SkipDir
+								}
+								// If recursive is true (which it is to be in this block),
+								// we don't need an explicit check for `!recursive && path != pattern` here,
+								// as WalkDir handles the recursion.
 							}
 							if !d.IsDir() {
+								// TODO: Implement file extension filtering here based on supported extensions
+								// e.g., ext := utils.GetFileExtension(d.Name()); if isSupported(ext) { ... }
 								filesToAnalyze = append(filesToAnalyze, path)
 							}
 							return nil
@@ -159,7 +144,7 @@ Use --recursive to scan directories.`,
 						if err != nil {
 							log.Error("Error walking directory", "directory", pattern, "error", err)
 						}
-					} else {
+					} else { // pattern is a file or glob
 						matches, globErr := filepath.Glob(pattern)
 						if globErr != nil {
 							log.Error("Invalid file pattern for recursive glob", "pattern", pattern, "error", globErr)
@@ -168,24 +153,37 @@ Use --recursive to scan directories.`,
 						for _, match := range matches {
 							matchInfo, matchStatErr := os.Stat(match)
 							if matchStatErr == nil {
-								if matchInfo.IsDir() {
+								if matchInfo.IsDir() { // If a glob matches a directory and recursive is true
 									filepath.WalkDir(match, func(path string, d os.DirEntry, err error) error {
 										if err != nil {
-											log.Warn("Error accessing path during walk", "path", path, "error", err)
-											return filepath.SkipDir
+											// Log and continue if possible, or return err to stop
+											log.Warn("Error accessing path, skipping", "path", path, "error", err)
+											return nil // or return err if you want to stop walking on any error
+										}
+										if d.IsDir() {
+											// Normalize directory name to lowercase for case-insensitive comparison
+											dirName := strings.ToLower(d.Name())
+											// Skip common VCS, build, and dependency directories
+											if dirName == ".git" || dirName == ".svn" || dirName == ".hg" || dirName == ".bzr" ||
+												dirName == "vendor" || dirName == "node_modules" ||
+												dirName == "target" || dirName == "dist" || dirName == "build" {
+												log.Debug("Skipping directory", "path", path, "reason", "standard skip list")
+												return filepath.SkipDir
+											}
 										}
 										if !d.IsDir() {
+											// TODO: Implement file extension filtering here
 											filesToAnalyze = append(filesToAnalyze, path)
 										}
 										return nil
 									})
-								} else {
+								} else { // match is a file
 									filesToAnalyze = append(filesToAnalyze, match)
 								}
 							}
 						}
 					}
-				} else {
+				} else { // Not recursive
 					matches, err := filepath.Glob(pattern)
 					if err != nil {
 						log.Error("Invalid file pattern", "pattern", pattern, "error", err)
@@ -193,6 +191,7 @@ Use --recursive to scan directories.`,
 					}
 					for _, match := range matches {
 						if info, err := os.Stat(match); err == nil && !info.IsDir() {
+							// TODO: Implement file extension filtering here if needed for non-recursive single files
 							filesToAnalyze = append(filesToAnalyze, match)
 						}
 					}
@@ -200,7 +199,7 @@ Use --recursive to scan directories.`,
 			}
 
 			if len(filesToAnalyze) == 0 {
-				log.Info("No files found matching the pattern(s) or specified paths. Exiting.")
+				log.Info("No files found matching the pattern(s) or specified paths after filtering. Exiting.")
 				fmt.Println("No files found to analyze.")
 				return nil
 			}

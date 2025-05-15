@@ -15,11 +15,9 @@ import (
 	"github.com/castrovroberto/codex-lite/internal/logger"
 	"github.com/castrovroberto/codex-lite/internal/tui/chat"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-
-	//"github.com/castrovroberto/codex-lite/internal/tui/chat"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 

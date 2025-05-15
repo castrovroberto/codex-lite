@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	// Import slog for logging errors
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/castrovroberto/codex-lite/internal/config" // Ensure this path and package are correct
+	"github.com/castrovroberto/codex-lite/internal/logger" // Import logger to get the global logger
 	"github.com/castrovroberto/codex-lite/internal/ollama"
 )
 
@@ -37,6 +39,7 @@ type Model struct {
 	// Store chat history as a slice of strings or a more structured format
 	// For now, we'll just append to the viewport directly.
 }
+
 func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Send a message..."
@@ -53,11 +56,18 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 
 	vp := viewport.New(50, 10)
 	// Use a glamour renderer for markdown
-	renderer, _ := glamour.NewTermRenderer(
+	// Handle potential error during renderer creation
+	renderer, err := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(vp.Width), // Initial word wrap based on viewport width
 	)
 	vp.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+
+	if err != nil {
+		// Log the error and proceed without markdown rendering
+		logger.Get().Error("Failed to initialize glamour markdown renderer", "error", err)
+		renderer = nil // Ensure renderer is nil if creation failed
+	}
 
 	vp.SetContent("Welcome to Codex Lite Chat! Type your message and press Enter.")
 	// vp.UserData = renderer // Removed: UserData is not a field of viewport.Model
@@ -69,7 +79,7 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		errorStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("1")),
 		cfg:         cfg,
 		modelName:   modelName,
-		parentCtx:   ctx, // Store the provided context
+		parentCtx:   ctx,      // Store the provided context
 		renderer:    renderer, // Initialize the renderer in our model
 		err:         nil,
 		loading:     false,
@@ -85,7 +95,9 @@ func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
 		// Use the parentCtx from the model, which should have AppConfig and Logger
 		// If parentCtx is nil, default to context.Background(), but this indicates a setup issue.
 		baseCtx := m.parentCtx
-		if baseCtx == nil { baseCtx = context.Background() }
+		if baseCtx == nil {
+			baseCtx = context.Background()
+		}
 		ctx, cancel := context.WithTimeout(baseCtx, 60*time.Second)
 		defer cancel()
 
@@ -162,12 +174,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.renderer != nil {
 			// This recreates the renderer; glamour might not support dynamic width changes easily.
 			// Or, you might need to re-render existing content if it stores raw markdown.
-			newRenderer, _ := glamour.NewTermRenderer(
+			// Handle potential error during renderer recreation on resize
+			newRenderer, err := glamour.NewTermRenderer(
 				glamour.WithAutoStyle(),
 				glamour.WithWordWrap(m.viewport.Width), // Use new viewport width
 			)
-			m.renderer = newRenderer
-			// Note: Existing content in the viewport won't automatically re-wrap with just this.
+			if err != nil {
+				logger.Get().Error("Failed to re-initialize glamour markdown renderer on resize", "error", err)
+				// Keep the old renderer or keep it nil if it was already nil
+			} else {
+				m.renderer = newRenderer
+			}
 			// You'd need to re-process and SetContent with the re-rendered markdown.
 			// This is a complex UI feature usually requiring storing all raw messages.
 		}
@@ -192,6 +209,7 @@ func (m *Model) appendToViewport(content string, isMarkdown bool) {
 			finalContent = "Bot: " + strings.TrimSpace(renderedOutput)
 		} else {
 			// Fallback to plain text if rendering fails
+			logger.Get().Warn("Markdown rendering failed for bot message, falling back to plain text.", "error", err)
 			finalContent = "Bot: " + rawBotMessage
 		}
 	}

@@ -1,24 +1,19 @@
 package cmd
 
 import (
-	"errors"
-	"fmt"
+   "context"
+   "errors"
+   "fmt"
 
-	// Import slog for fallback logger
-	// Import slog
-	// Needed for fallback logger
-	// Needed for fallback logger
+   "github.com/castrovroberto/codex-lite/internal/config"
+   "github.com/castrovroberto/codex-lite/internal/contextkeys"
+   "github.com/castrovroberto/codex-lite/internal/logger"
+   "github.com/castrovroberto/codex-lite/internal/tui/chat"
 
-	//"github.com/castrovroberto/codex-lite/internal/config"
-
-	"github.com/castrovroberto/codex-lite/internal/config"
-	"github.com/castrovroberto/codex-lite/internal/logger"
-	"github.com/castrovroberto/codex-lite/internal/tui/chat"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
-	"github.com/spf13/cobra"
+   tea "github.com/charmbracelet/bubbletea"
+   "github.com/charmbracelet/lipgloss"
+   "github.com/muesli/termenv"
+   "github.com/spf13/cobra"
 )
 
 var chatCmd = &cobra.Command{
@@ -51,9 +46,11 @@ var chatCmd = &cobra.Command{
 		}
 		log.Info("Starting chat session", "model", chatModelName)
 
-		// Pass the context (which contains config and logger) to InitialModel
-		// Note: InitialModel now takes ctx as the first argument
-		chatAppModel := chat.InitialModel(cmd.Context(), &appCfg, chatModelName)
+		// Create a context containing the global config and logger for downstream components
+		ctx := cmd.Context()
+		ctx = context.WithValue(ctx, contextkeys.ConfigKey, appCfg)
+		ctx = context.WithValue(ctx, contextkeys.LoggerKey, log)
+		chatAppModel := chat.InitialModel(ctx, &appCfg, chatModelName)
 
 		// Attempt to force a more compatible color profile for lipgloss
 		// This might help with terminals that don't fully support TrueColor OSC sequences.

@@ -3,10 +3,12 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	// "log/slog" // For logging within the orchestrator itself if needed, separate from context logger for now
+	//"log/slog" // Using slog from the context
 
 	"github.com/castrovroberto/codex-lite/internal/agents"
 	"github.com/castrovroberto/codex-lite/internal/contextkeys" // For retrieving values from context
+	// No direct import of "github.com/castrovroberto/codex-lite/internal/config" needed here
+	// as appCfg is retrieved from context and its type is handled by contextkeys.
 )
 
 // Orchestrator defines the interface for managing and running agents.
@@ -19,16 +21,16 @@ type Orchestrator interface {
 		agentNames []string,
 		filePath string,
 		fileContent string,
-	) ([]agents.Result, error) // error is for orchestrator-level failures like context cancellation
+	) ([]agents.Result, error) // error is for orchestrator-level failures
 }
 
 // BasicOrchestrator is a simple implementation of the Orchestrator interface.
 type BasicOrchestrator struct {
 	agents map[string]agents.Agent
-	// log    *slog.Logger // Orchestrator's own logger, if needed distinct from context one. For now, use context's.
 }
 
 // NewBasicOrchestrator creates a new instance of BasicOrchestrator.
+// It returns an Orchestrator interface, satisfied by *BasicOrchestrator.
 func NewBasicOrchestrator() Orchestrator {
 	return &BasicOrchestrator{
 		agents: make(map[string]agents.Agent),
@@ -43,6 +45,9 @@ func (o *BasicOrchestrator) RegisterAgent(agent agents.Agent) error {
 		return fmt.Errorf("agent '%s' already registered", name)
 	}
 	o.agents[name] = agent
+	// Optionally log agent registration
+	// log := contextkeys.LoggerFromContext(context.Background()) // Or pass context if available
+	// log.Debug("Agent registered", "agent_name", name)
 	return nil
 }
 
@@ -65,8 +70,8 @@ func (o *BasicOrchestrator) AvailableAgentNames() []string {
 	return names
 }
 
-// RunAgents executes the specified agents sequentially for the given file content.
-// It collects results and errors for each agent run.
+// RunAgents executes the specified agents for a given file.
+// It retrieves configuration and logger from the provided context.
 func (o *BasicOrchestrator) RunAgents(
 	ctx context.Context,
 	agentNames []string,
@@ -74,61 +79,62 @@ func (o *BasicOrchestrator) RunAgents(
 	fileContent string,
 ) ([]agents.Result, error) {
 	results := make([]agents.Result, 0, len(agentNames))
-	log := contextkeys.LoggerFromContext(ctx)    // Retrieve logger from context
-	appCfg := contextkeys.ConfigFromContext(ctx) // Retrieve config from context
+	log := contextkeys.LoggerFromContext(ctx)
+	appCfg := contextkeys.ConfigFromContext(ctx) // Retrieves config.AppConfig
 
-	modelToUse := appCfg.ModelName
+	// Use the DefaultModel field from AppConfig
+	modelForAgents := appCfg.DefaultModel
+	if modelForAgents == "" {
+		log.Warn("No default model configured in AppConfig, agents might fail if they require a model name.")
+		// Depending on agent requirements, you might set a fallback or return an error.
+		// For now, we'll let agents handle missing model names if they can.
+	} else {
+		log.Debug("Orchestrator using model for agents", "model", modelForAgents)
+	}
 
-	for _, name := range agentNames {
-		// Check for context cancellation before running the next agent
+	if len(agentNames) == 0 {
+		log.Info("No agents specified to run.", "file", filePath)
+		return results, nil // Or return an error if agents are mandatory
+	}
+
+	for _, currentAgentName := range agentNames {
 		select {
 		case <-ctx.Done():
-			log.Info("Agent orchestration cancelled", "file", filePath, "agent_to_run", name)
-			return results, ctx.Err() // Return already collected results and context error
+			log.Info("Agent orchestration cancelled by context", "file", filePath, "last_agent_to_run", currentAgentName)
+			return results, ctx.Err()
 		default:
-			// Continue
+			// Continue processing
 		}
 
-		agent, err := o.GetAgent(name)
+		agent, err := o.GetAgent(currentAgentName)
 		if err != nil {
-			log.Warn("Requested agent not found, skipping", "agent_name", name, "file", filePath)
+			log.Warn("Requested agent not found, skipping", "agent_name", currentAgentName, "file", filePath, "error", err.Error())
 			results = append(results, agents.Result{
-				AgentName: name,
+				AgentName: currentAgentName,
 				File:      filePath,
-				Error:     fmt.Errorf("agent '%s' not found during execution", name),
+				Error:     fmt.Errorf("agent '%s' not found during execution: %w", currentAgentName, err),
 			})
-			continue // Skip to the next agent
+			continue
 		}
 
-		log.Info("Running agent", "agent_name", agent.Name(), "file", filePath, "model_name", modelToUse)
+		log.Info("Running agent", "agent_name", agent.Name(), "file", filePath, "model_name_for_agent", modelForAgents)
 
-		// Pass the enriched context down to the agent's Analyze method
-		result, agentErr := agent.Analyze(ctx, modelToUse, filePath, fileContent)
-
+		// Pass the model name (modelForAgents) to the agent's Analyze method
+		result, agentErr := agent.Analyze(ctx, modelForAgents, filePath, fileContent)
 		if agentErr != nil {
-			log.Error("Agent analysis returned an error", "agent_name", agent.Name(), "file", filePath, "error", agentErr)
-			// Ensure AgentName and File are set in the result, even if Analyze returned a partially filled Result
-			if result.AgentName == "" {
-				result.AgentName = agent.Name()
-			}
-			if result.File == "" {
-				result.File = filePath
-			}
-			result.Error = agentErr // Store the error in the result struct
-		} else {
-			log.Info("Agent analysis complete", "agent_name", agent.Name(), "file",filePath)
-			// Ensure AgentName and File are set on success as well, for consistency
-			if result.AgentName == "" {
-				result.AgentName = agent.Name()
-			}
-			if result.File == "" {
-				result.File = filePath
-			}
+			log.Error("Agent execution failed", "agent_name", agent.Name(), "file", filePath, "error", agentErr.Error())
+			// Append a result even if there's an error from the agent
+			results = append(results, agents.Result{
+				AgentName: agent.Name(),
+				File:      filePath,
+				Error:     agentErr, // Store the agent's error
+			})
+			// Decide if one agent error should stop all others or just continue
+			continue
 		}
 		results = append(results, result)
 	}
 
-	// RunAgents collects all results/errors; a non-nil error return from RunAgents itself
-	// indicates an orchestrator-level failure (like context cancellation, handled above).
+	log.Debug("Finished running agents", "file", filePath, "agents_processed_count", len(agentNames), "results_count", len(results))
 	return results, nil
 }

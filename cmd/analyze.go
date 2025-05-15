@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"log/slog"
 	"golang.org/x/sync/errgroup" // For concurrent file processing
 
 	"github.com/castrovroberto/codex-lite/internal/agents"
@@ -36,20 +37,22 @@ codex-lite analyze path/to/your/file.go
 codex-lite analyze "*.py"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Load configuration
-			appCfg, err := config.LoadConfig(cfgFile) // cfgFile from root.go
-			if err != nil {
+			if loadCfgErr := config.LoadConfig(cfgFile); loadCfgErr != nil { // cfgFile from root.go
 				// Use a basic logger if the main one hasn't been initialized due to config error
-				slog.Error("Failed to load configuration on startup", "error", err)
-				return fmt.Errorf("failed to load configuration: %w", err)
+				slog.Error("Failed to load configuration on startup", "error", loadCfgErr)
+				return fmt.Errorf("failed to load configuration: %w", loadCfgErr)
 			}
+			appCfg := config.Cfg // Use the global Cfg after successful load
+
 
 			// Initialize logger based on loaded config
-			log := logger.Init(appCfg.LogLevel, appCfg.LogFormat)
+			logger.InitLogger(appCfg.LogLevel) // Corrected function name and removed LogFormat
+			log := logger.Get() // Get the initialized logger
 			log.Info("Codex Lite analyze starting...")
 			log.Debug("Loaded configuration", "config", appCfg)
 
 			// Create base context and inject config and logger
-			baseCtx := cmd.Context() // Get context from Cobra command
+			baseCtx := cmd.Context() // Get context from Cobra commandS
 			ctxWithValues := context.WithValue(baseCtx, contextkeys.ConfigKey, appCfg)
 			ctxWithValues = context.WithValue(ctxWithValues, contextkeys.LoggerKey, log)
 
@@ -106,22 +109,62 @@ codex-lite analyze "*.py"`,
 			var filesToAnalyze []string
 			for _, pattern := range args {
 				if recursive {
-					err := filepath.WalkDir(pattern, func(path string, d os.DirEntry, err error) error {
+					// For recursive, we assume pattern is a directory or contains wildcards for directories
+					// If pattern is a specific directory like "./src", filepath.WalkDir is good.
+					// If pattern is like "./**/_.go", Glob might be better first, then walk matched dirs.
+					// For simplicity, let's assume 'pattern' can be a starting directory for WalkDir.
+					// A more robust solution might combine Glob for initial patterns and then WalkDir for directories.
+					
+					// Check if the pattern itself is a directory
+					info, statErr := os.Stat(pattern)
+					if statErr == nil && info.IsDir() {
+						// It's a directory, walk it
+						err := filepath.WalkDir(pattern, func(path string, d os.DirEntry, err error) error {
+							if err != nil {
+								log.Warn("Error accessing path during walk", "path", path, "error", err)
+								return filepath.SkipDir // Or return err to stop walking this dir
+							}
+							if !d.IsDir() {
+								filesToAnalyze = append(filesToAnalyze, path)
+							}
+							return nil
+						})
 						if err != nil {
-							log.Warn("Error accessing path during walk", "path", path, "error", err)
-							return filepath.SkipDir // Or return err to stop walking this dir
+							log.Error("Error walking directory", "directory", pattern, "error", err)
 						}
-						if !d.IsDir() {
-							// Basic check for non-binary might be useful, or rely on agents
-							filesToAnalyze = append(filesToAnalyze, path)
+					} else {
+						// If not a directory, or stat failed, try Glob for recursive patterns like "**/_.go"
+						// This part can be complex. For now, we'll stick to simple directory walking
+						// or non-recursive Glob. A full ** glob might need a library or more complex logic.
+						// For now, if recursive is true and pattern is not a dir, we'll Glob and then check if matches are dirs.
+						matches, globErr := filepath.Glob(pattern)
+						if globErr != nil {
+							log.Error("Invalid file pattern for recursive glob", "pattern", pattern, "error", globErr)
+							continue
 						}
-						return nil
-					})
-					if err != nil {
-						log.Error("Error walking directory", "pattern", pattern, "error", err)
-						// Continue to next pattern if one walk fails
+						for _, match := range matches {
+							matchInfo, matchStatErr := os.Stat(match)
+							if matchStatErr == nil {
+								if matchInfo.IsDir() {
+									// Walk this matched directory
+									filepath.WalkDir(match, func(path string, d os.DirEntry, err error) error {
+										if err != nil {
+											log.Warn("Error accessing path during walk", "path", path, "error", err)
+											return filepath.SkipDir
+										}
+										if !d.IsDir() {
+											filesToAnalyze = append(filesToAnalyze, path)
+										}
+										return nil
+									})
+								} else {
+									// It's a file from the glob match
+									filesToAnalyze = append(filesToAnalyze, match)
+								}
+							}
+						}
 					}
-				} else {
+				} else { // Not recursive
 					matches, err := filepath.Glob(pattern)
 					if err != nil {
 						log.Error("Invalid file pattern", "pattern", pattern, "error", err)
@@ -141,6 +184,23 @@ codex-lite analyze "*.py"`,
 				return nil
 			}
 
+			// Deduplicate filesToAnalyze (in case of overlapping patterns or walks)
+			seen := make(map[string]bool)
+			uniqueFiles := []string{}
+			for _, file := range filesToAnalyze {
+				absPath, err := filepath.Abs(file)
+				if err != nil {
+					log.Warn("Could not get absolute path for file, using as is", "file", file, "error", err)
+					absPath = file // Use original if Abs fails
+				}
+				if !seen[absPath] {
+					seen[absPath] = true
+					uniqueFiles = append(uniqueFiles, absPath)
+				}
+			}
+			filesToAnalyze = uniqueFiles
+
+
 			log.Info("Files to analyze", "count", len(filesToAnalyze))
 			if len(filesToAnalyze) < 10 { // Log all files if list is short
 				log.Debug("Target files", "files", filesToAnalyze)
@@ -154,10 +214,13 @@ codex-lite analyze "*.py"`,
 			for _, filePath := range filesToAnalyze {
 				filePath := filePath // Capture loop variable for goroutine
 				g.Go(func() error {
-					log.Info("Starting analysis for file", "file", filePath)
+					// Retrieve logger from context for this goroutine
+					gLog := contextkeys.LoggerFromContext(analysisCtx)
+					gLog.Info("Starting analysis for file", "file", filePath)
+
 					fileContentBytes, err := os.ReadFile(filePath)
 					if err != nil {
-						log.Error("Failed to read file", "file", filePath, "error", err)
+						gLog.Error("Failed to read file", "file", filePath, "error", err)
 						fmt.Printf("❌ Failed to read file %s: %v\n", filePath, err)
 						return nil // Return nil to allow other files to be processed
 					}
@@ -168,7 +231,7 @@ codex-lite analyze "*.py"`,
 					results, orchErr := agentOrchestrator.RunAgents(analysisCtx, agentsToRun, filePath, string(fileContentBytes))
 					if orchErr != nil {
 						// This error is typically context cancellation from the orchestrator
-						log.Error("Orchestrator encountered an error for file", "file", filePath, "error", orchErr)
+						gLog.Error("Orchestrator encountered an error for file", "file", filePath, "error", orchErr)
 						fmt.Printf("⚠️ Orchestrator error for %s: %v\n", filePath, orchErr)
 						if errors.Is(orchErr, context.Canceled) || errors.Is(orchErr, context.DeadlineExceeded) {
 							return orchErr // Propagate context errors to stop the errgroup
@@ -182,26 +245,36 @@ codex-lite analyze "*.py"`,
 						if result.Error != nil {
 							// Handle individual agent error that the orchestrator collected
 							var agentErr *agents.AgentError
-							var ollamaErrHostUnreachable, ollamaErrModelNotFound error // For cleaner errors.Is
+							// No need to declare ollamaErrHostUnreachable, ollamaErrModelNotFound here
+							// We will use ollama.ErrOllamaHostUnreachable directly
 
 							if errors.As(result.Error, &agentErr) {
-								log.Error("Agent execution failed", "agent_name", agentErr.AgentName, "file", result.File, "agent_message", agentErr.Message, "underlying_error", agentErr.Unwrap())
+								gLog.Error("Agent execution failed", "agent_name", agentErr.AgentName, "file", result.File, "agent_message", agentErr.Message, "underlying_error", agentErr.Unwrap())
 								fmt.Printf("⚠️ Error with %s (%s) on %s: %v\n", agentErr.AgentName, agentErr.Message, result.File, agentErr.Unwrap())
 							} else if errors.Is(result.Error, ollama.ErrOllamaHostUnreachable) { // Compare with sentinel errors directly
-								log.Error("Ollama host unreachable", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
+								gLog.Error("Ollama host unreachable", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
 								fmt.Printf("⚠️ Error with %s on %s: Could not connect to Ollama: %v\n", result.AgentName, result.File, result.Error)
 							} else if errors.Is(result.Error, ollama.ErrOllamaModelNotFound) {
-								log.Error("Ollama model not found", "agent_name", result.AgentName, "file", result.File, "error", result.Error, "model_used", appCfg.ModelName)
-								fmt.Printf("⚠️ Error with %s on %s: The model '%s' was not found by Ollama: %v\n", result.AgentName, result.File, appCfg.ModelName, result.Error)
+								currentAppCfg := contextkeys.ConfigFromContext(analysisCtx) // Get current config for model name
+								gLog.Error("Ollama model not found", "agent_name", result.AgentName, "file", result.File, "error", result.Error, "model_used", currentAppCfg.DefaultModel)
+								fmt.Printf("⚠️ Error with %s on %s: The model '%s' was not found by Ollama: %v\n", result.AgentName, result.File, currentAppCfg.DefaultModel, result.Error)
 							} else {
-								log.Error("Generic error during agent analysis", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
+								gLog.Error("Generic error during agent analysis", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
 								fmt.Printf("⚠️ Error with %s on %s: %v\n", result.AgentName, result.File, result.Error)
 							}
 						} else {
 							fmt.Printf("✅ %s analysis complete for %s.\n", result.AgentName, result.File)
 							// You can access result.Output here if needed for further processing/display
 							if result.Output != "" {
-								fmt.Printf("   Output: %s\n", result.Output) // Simple output display
+								// Indent output for clarity
+								outputLines := strings.Split(strings.TrimSpace(result.Output), "\n")
+								for i, line := range outputLines {
+									if i == 0 {
+										fmt.Printf("   Output: %s\n", line)
+									} else {
+										fmt.Printf("           %s\n", line)
+									}
+								}
 							}
 						}
 					}

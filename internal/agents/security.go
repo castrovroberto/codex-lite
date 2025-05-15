@@ -91,13 +91,3 @@ func (a *SecurityAgent) Analyze(ctx context.Context, modelName, filePath, fileCo
 		Output:    securityResp.SecurityAnalysis,
 	}, nil
 }
-
-// I've added a local min function to each agent file for simplicity.
-// If you have a shared utils package where getFileExtension lives,
-// you could add min there too.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

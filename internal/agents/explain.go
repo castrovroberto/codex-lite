@@ -7,16 +7,15 @@ import (
 	"fmt"
 	"text/template"
 
-	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/contextkeys"
 	"github.com/castrovroberto/codex-lite/internal/ollama"
-	// "github.com/castrovroberto/codex-lite/internal/logger"
 )
 
 // ExplainAgent provides explanations for code snippets.
 type ExplainAgent struct{}
 
 // NewExplainAgent creates a new ExplainAgent.
-func NewExplainAgent() *ExplainAgent {
+func NewExplainAgent() Agent { // Return the interface type
 	return &ExplainAgent{}
 }
 
@@ -55,8 +54,20 @@ type ExplanationResponse struct {
 
 // Analyze performs the code explanation.
 func (a *ExplainAgent) Analyze(ctx context.Context, modelName, filePath, fileContent string) (Result, error) {
-	appCfg := config.GetConfig()
-	lang := getFileExtension(filePath) // Corrected: Use getFileExtension
+	log := contextkeys.LoggerFromContext(ctx)
+	appCfg := contextkeys.ConfigFromContext(ctx)
+	lang := getFileExtension(filePath)
+
+	log.Debug("Running ExplainAgent", "file", filePath, "model", modelName)
+
+	// Check for context cancellation early
+	select {
+	case <-ctx.Done():
+		log.Info("ExplainAgent analysis cancelled", "file", filePath)
+		return Result{AgentName: a.Name(), File: filePath}, ctx.Err()
+	default:
+		// Continue
+	}
 
 	data := explainTemplateData{
 		Language: lang,
@@ -65,7 +76,8 @@ func (a *ExplainAgent) Analyze(ctx context.Context, modelName, filePath, fileCon
 
 	tmpl, err := template.New("explainPrompt").Parse(explainPromptTemplate)
 	if err != nil {
-		return Result{}, &AgentError{
+		log.Error("Failed to parse explain prompt template", "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{ // Use the AgentError from agents package
 			AgentName: a.Name(),
 			Message:   "failed to parse explain prompt template",
 			Err:       err,
@@ -74,7 +86,8 @@ func (a *ExplainAgent) Analyze(ctx context.Context, modelName, filePath, fileCon
 
 	var promptBuf bytes.Buffer
 	if err := tmpl.Execute(&promptBuf, data); err != nil {
-		return Result{}, &AgentError{
+		log.Error("Failed to execute explain prompt template", "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{ // Use the AgentError from agents package
 			AgentName: a.Name(),
 			Message:   "failed to execute explain prompt template",
 			Err:       err,
@@ -83,23 +96,27 @@ func (a *ExplainAgent) Analyze(ctx context.Context, modelName, filePath, fileCon
 
 	response, err := ollama.Query(ctx, appCfg.OllamaHostURL, modelName, promptBuf.String())
 	if err != nil {
-		return Result{}, &AgentError{
+		log.Error("Ollama query failed for ExplainAgent", "file", filePath, "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{ // Use the AgentError from agents package
 			AgentName: a.Name(),
 			Message:   "Ollama query failed during code explanation",
 			Err:       err,
 		}
 	}
 
+	log.Debug("Received Ollama response for ExplainAgent", "file", filePath, "response_length", len(response))
 	var explanationResp ExplanationResponse
 	if err := json.Unmarshal([]byte(response), &explanationResp); err != nil {
-		return Result{}, &AgentError{
+		log.Error("Failed to parse JSON response from Ollama for explanation", "response_snippet", response[:min(len(response), 200)], "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{ // Use the AgentError from agents package
 			AgentName: a.Name(),
 			Message:   "failed to parse JSON response from Ollama for explanation",
-			Err:       fmt.Errorf("unmarshal error: %w, raw response: %s", err, response),
+			Err:       fmt.Errorf("unmarshal error: %w, raw response: %s", err, response[:min(len(response), 500)]),
 		}
 	}
 
-	return Result{
+	log.Debug("ExplainAgent analysis complete", "file", filePath)
+	return Result{ // Use the Result from agents package
 		AgentName: a.Name(),
 		File:      filePath,
 		Output:    explanationResp.Explanation,

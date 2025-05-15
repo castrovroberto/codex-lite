@@ -10,19 +10,22 @@ import (
 	"github.com/castrovroberto/codex-lite/internal/ollama"
 )
 
+var chatModelName string
+
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Launch an interactive Codex Lite session",
 	Run: func(cmd *cobra.Command, args []string) {
-		sessionLoop()
+		sessionLoop(chatModelName)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(chatCmd)
+	chatCmd.Flags().StringVarP(&chatModelName, "model", "m", "deepseek-coder-v2-lite", "Model to use for the chat session")
 }
 
-func sessionLoop() {
+func sessionLoop(modelName string) {
 	fmt.Println("\n+--------------------------------------------------+")
 	fmt.Println("| Codex Lite - Interactive Session (v0.1)         |")
 	fmt.Println("+--------------------------------------------------+")
@@ -37,7 +40,6 @@ func sessionLoop() {
 	fmt.Println("+--------------------------------------------------+")
 
 	scanner := bufio.NewScanner(os.Stdin)
-	model := "deepseek-coder-v2-lite"
 
 	for {
 		fmt.Print("\n> ")
@@ -49,7 +51,7 @@ func sessionLoop() {
 			break
 		}
 
-		response, err := ollama.Query(model, prompt)
+		response, err := ollama.Query(modelName, prompt)
 		if err != nil {
 			fmt.Println("⚠️  Error from model:", err)
 			continue

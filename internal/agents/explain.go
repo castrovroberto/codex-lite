@@ -1,24 +1,69 @@
+// internal/agents/explain.go
 package agents
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"strings" // For strings.TrimSpace
+	"text/template"
+
+	"github.com/castrovroberto/codex-lite/internal/config"
 	"github.com/castrovroberto/codex-lite/internal/ollama"
-	"strings"
 )
 
 type ExplainAgent struct {
-	// Model field removed
+	// Model field removed, modelName passed to Analyze
 }
 
 func (a *ExplainAgent) Name() string {
 	return "ExplainAgent"
 }
 
+const explainPromptTemplate = `You are a code explanation assistant.
+Explain the purpose, functionality, and key components of the following {{.FileExtension}} code.
+If there are any complex parts, try to simplify them.
+Format your entire output as Markdown.
+
+Code to analyze (file type: {{.FileExtension}}):
+` + "```{{.FileExtension}}\n{{.Code}}\n```"
+
+type ExplainPromptData struct {
+	FileExtension string
+	Code          string
+}
+
 func (a *ExplainAgent) Analyze(ctx context.Context, modelName string, path string, code string) (Result, error) {
-	prompt := fmt.Sprintf("Explain the purpose of the following %s code. Format the output as Markdown:\n\n```%s\n%s\n```", getFileExtension(path), getFileExtension(path), code)	
-	// TODO: Implement call to Ollama or other LLM service
-	explanation := "Explanation of the code goes here. This is currently a placeholder."	
-	// For now, return a placeholder result
-	return Result{File: path, Output: strings.TrimSpace(explanation), Agent: a.Name()}, nil
+	appCfg := config.FromContext(ctx)
+
+	tmpl, err := template.New("explainPrompt").Parse(explainPromptTemplate)
+	if err != nil {
+		return Result{}, fmt.Errorf("ExplainAgent: failed to parse prompt template: %w", err)
+	}
+
+	fileExt := getFileExtension(path) // Assumes getFileExtension is in this package
+	if fileExt == "" {
+		fileExt = "text" // Default if extension is unknown
+	}
+
+	data := ExplainPromptData{
+		FileExtension: fileExt,
+		Code:          code,
+	}
+
+	var promptBuf bytes.Buffer
+	if err := tmpl.Execute(&promptBuf, data); err != nil {
+		return Result{}, fmt.Errorf("ExplainAgent: failed to execute prompt template: %w", err)
+	}
+
+	response, err := ollama.Query(appCfg.OllamaHostURL, modelName, promptBuf.String())
+	if err != nil {
+		return Result{}, fmt.Errorf("ExplainAgent: error from Ollama: %w", err)
+	}
+
+	return Result{
+		File:   path,
+		Output: strings.TrimSpace(response),
+		Agent:  a.Name(),
+	}, nil
 }

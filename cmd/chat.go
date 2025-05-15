@@ -1,17 +1,22 @@
 package cmd
 
 import (
-	//"context"
 	"errors"
 	"fmt"
 
 	// Import slog for fallback logger
+	// Import slog
+	// Needed for fallback logger
 	// Needed for fallback logger
 
 	//"github.com/castrovroberto/codex-lite/internal/config"
-	"github.com/castrovroberto/codex-lite/internal/contextkeys"
+
+	"github.com/castrovroberto/codex-lite/internal/config"
 	"github.com/castrovroberto/codex-lite/internal/logger"
 	"github.com/castrovroberto/codex-lite/internal/tui/chat"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	//"github.com/castrovroberto/codex-lite/internal/tui/chat"
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,12 +27,21 @@ var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Start an interactive chat session with an LLM",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Config and Logger are loaded and set in context by rootCmd.PersistentPreRunE
-		// We can retrieve config from context, but let's rely on the global logger
-		// which is guaranteed to be initialized by PersistentPreRunE.
+		// Config and Logger are loaded by rootCmd.PersistentPreRunE.
+		// Retrieve config from the global variable populated by LoadConfig.
+		// Retrieve logger from the global logger initialized by InitLogger.
+		appCfg := config.Cfg // Use the global config variable
+		log := logger.Get()  // Get the global logger
+
+		// Although we are using global config/logger here,
+		// the context still contains them and is passed down to the TUI model
+		// and subsequently to ollama.Query, which *does* retrieve them from context.
+		// This ensures consistency in how downstream components access config/logger.
+
+		/* Old context retrieval:
 		appCfg := contextkeys.ConfigFromContext(cmd.Context())
 		log := logger.Get() // Get the global logger, initialized by PersistentPreRunE
-
+		*/
 		// Get model name for chat (from flag or config)
 		chatModelName, _ := cmd.Flags().GetString("model")
 		if chatModelName == "" {
@@ -42,6 +56,11 @@ var chatCmd = &cobra.Command{
 		// Pass the context (which contains config and logger) to InitialModel
 		// Note: InitialModel now takes ctx as the first argument
 		chatAppModel := chat.InitialModel(cmd.Context(), &appCfg, chatModelName)
+
+		// Attempt to force a more compatible color profile for lipgloss
+		// This might help with terminals that don't fully support TrueColor OSC sequences.
+		// You can try termenv.ANSI256 or termenv.ANSI
+		lipgloss.SetColorProfile(termenv.ANSI256)
 
 		// Create and run the Bubble Tea program
 		p := tea.NewProgram(chatAppModel, tea.WithAltScreen()) // Use tea alias

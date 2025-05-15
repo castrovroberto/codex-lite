@@ -7,7 +7,8 @@ import (
 	"strings"
 
 	"github.com/castrovroberto/codex-lite/internal/agents"
-	"github.com/castrovroberto/codex-lite/internal/config" // Added
+	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/logger" // Added
 	"github.com/spf13/cobra"
 )
 
@@ -18,12 +19,12 @@ var explainCmd = &cobra.Command{
 	Long: `The explain command reads a specified code file, sends its content to a
 local LLM via Ollama, and prints the explanation of the code.`,
 	Args: cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		filePath := args[0]
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filePath, err)
-			os.Exit(1)
+			logger.Get().Error("Error reading file", "path", filePath, "error", err)
+			return fmt.Errorf("failed to read file %s: %w", filePath, err)
 		}
 
 		// Use the model specified by flag, or fallback to the global default model
@@ -37,11 +38,14 @@ local LLM via Ollama, and prints the explanation of the code.`,
 		agent := &agents.ExplainAgent{} // No model field needed here
 		result, err := agent.Analyze(ctx, modelToUse, filePath, string(data))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error analyzing file with ExplainAgent: %v\n", err)
-			os.Exit(1)
+			// Log it here for structured details, but also return it for Cobra to display
+			logger.Get().Error("Analysis failed", "agent", agent.Name(), "file", filePath, "error", err)
+			return fmt.Errorf("analysis by %s failed: %w", agent.Name(), err)
 		}
 
-		fmt.Printf("\n📘 Explanation for %s (using %s):\n\n%s\n", result.File, modelToUse, strings.TrimSpace(result.Output))
+		logger.Get().Info("Successfully explained file", "path", result.File, "model", modelToUse)
+		fmt.Printf("\n📘 Explanation for %s (using %s):\n\n%s\n", result.File, modelToUse, strings.TrimSpace(result.Output)) // User output
+		return nil
 	},
 }
 

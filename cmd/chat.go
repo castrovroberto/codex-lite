@@ -4,10 +4,11 @@ package cmd
 import (
 	// "context" // Removed: imported and not used
 	"fmt"
-	"os"
+	// "os"
 	// "strings" // No longer directly used here
 
 	"github.com/castrovroberto/codex-lite/internal/config" // Added
+	"github.com/castrovroberto/codex-lite/internal/logger" // Added
 	"github.com/castrovroberto/codex-lite/internal/tui/chat"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ import (
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Launch an interactive codex lite session",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		// Config is loaded globally by rootCmd
 		modelToUse, _ := cmd.Flags().GetString("model")
 		if modelToUse == "" {
@@ -33,9 +34,12 @@ var chatCmd = &cobra.Command{
 		p := tea.NewProgram(chatModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 		if _, err := p.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
-			os.Exit(1)
+			// Bubbletea errors are often not great for direct user display without context.
+			// Logging it is good. Returning a simpler error might be better for the user.
+			logger.Get().Error("Chat TUI failed", "error", err)
+			return fmt.Errorf("failed to run interactive chat session: %w", err)
 		}
+		return nil
 	},
 }
 

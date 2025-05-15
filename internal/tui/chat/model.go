@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss" // Now used
 
 	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/logger" // Added
 	"github.com/castrovroberto/codex-lite/internal/ollama"
 )
 
@@ -137,6 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ollamaErrorMsg:
 		m.isLoading = false
+		logger.Get().Error("Ollama query failed", "error", msg) // Log the error
 		m.err = error(msg) // Store the error
 		// Optionally add to messages list too:
 		// m.messages = append(m.messages, errorStyle.Render("Error: "+m.err.Error()))

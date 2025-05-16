@@ -194,6 +194,12 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 	if err := registry.Register(agent.NewFileReadTool(cfg.WorkspaceRoot)); err != nil {
 		logger.Get().Error("Failed to register file read tool", "error", err)
 	}
+	if err := registry.Register(agent.NewCodebaseAnalyzeTool(cfg.WorkspaceRoot)); err != nil {
+		logger.Get().Error("Failed to register codebase analysis tool", "error", err)
+	}
+	if err := registry.Register(agent.NewGitTool(cfg.WorkspaceRoot)); err != nil {
+		logger.Get().Error("Failed to register Git tool", "error", err)
+	}
 
 	// Add registry to model
 	m.toolRegistry = registry

@@ -99,6 +99,9 @@ Available models depend on your Ollama installation.`)
 			if err := agentOrchestrator.RegisterAgent(agents.NewSecurityAgent()); err != nil {
 				log.Warn("Failed to register Security agent", "error", err)
 			}
+			if err := agentOrchestrator.RegisterAgent(agents.NewAdvancedAgent(appCfg.WorkspaceRoot)); err != nil {
+				log.Warn("Failed to register Advanced agent", "error", err)
+			}
 
 			var agentsToRun []string
 			if len(agentNames) == 0 {

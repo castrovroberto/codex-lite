@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	// Import slog for logging errors
+	// Bubbles components for TUI
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,18 +33,30 @@ type chatMessage struct {
 	placeholder bool
 }
 
+// Model defines the state of the chat TUI, including header, spinner, and message history.
 type Model struct {
-	viewport    viewport.Model
-	textarea    textarea.Model
+	// Header information
+	headerStyle lipgloss.Style
+	provider    string
+	sessionID   string
+	// Loading spinner
+	spin spinner.Model
+	// Chat window components
+	viewport viewport.Model
+	textarea textarea.Model
+	// Styles
 	senderStyle lipgloss.Style
 	errorStyle  lipgloss.Style
-	cfg         *config.AppConfig // Check this type if 'undefined' error persists
-	modelName   string
-	parentCtx   context.Context // Store the parent context
-	err         error
-	loading     bool
-	renderer    *glamour.TermRenderer // Glamour markdown renderer
-	// Chat history as structured messages for re-rendering and resize support
+	// Context and config
+	cfg       *config.AppConfig
+	modelName string
+	parentCtx context.Context
+	// Error and loading state
+	err     error
+	loading bool
+	// Markdown renderer
+	renderer *glamour.TermRenderer // Glamour markdown renderer
+	// Chat history as structured messages
 	messages         []chatMessage
 	placeholderIndex int // index of the current placeholder message, or -1 if none
 }
@@ -79,8 +92,22 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		renderer = nil // Ensure renderer is nil if creation failed
 	}
 
+	// Setup header and session info
+	provider := "Ollama"
+	sessionID := time.Now().Format("2006-01-02 15:04:05")
+	headerStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("188")).Padding(0, 1)
+
+	// Setup loading spinner
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+
 	// Prepare the model with initial message history
 	m := Model{
+		headerStyle:      headerStyle,
+		provider:         provider,
+		sessionID:        sessionID,
+		spin:             sp,
 		textarea:         ta,
 		viewport:         vp,
 		senderStyle:      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
@@ -118,27 +145,37 @@ func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
 
 		response, err := ollama.Query(ctx, m.cfg.OllamaHostURL, m.modelName, prompt)
 		if err != nil {
-			return ollamaErrorMsg(fmt.Errorf("Ollama query failed: %w", err))
+			return ollamaErrorMsg(fmt.Errorf("ollama query failed: %w", err))
 		}
 		return ollamaResponseMsg(response)
 	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-   // Intercept scroll keys to allow scrolling the chat viewport even when the textarea is focused
-   if keyMsg, ok := msg.(tea.KeyMsg); ok {
-       switch keyMsg.Type {
-       case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
-           // Scroll the viewport
-           var vpCmd tea.Cmd
-           m.viewport, vpCmd = m.viewport.Update(keyMsg)
-           return m, vpCmd
-       }
-   }
-   var (
-       tiCmd tea.Cmd
-       vpCmd tea.Cmd
-   )
+	// Handle spinner ticks for loading state
+	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if m.loading {
+			var cmd tea.Cmd
+			m.spin, cmd = m.spin.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
+	// Intercept scroll keys to allow scrolling the chat viewport even when the textarea is focused
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.Type {
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+			// Scroll the viewport
+			var vpCmd tea.Cmd
+			m.viewport, vpCmd = m.viewport.Update(keyMsg)
+			return m, vpCmd
+		}
+	}
+	var (
+		tiCmd tea.Cmd
+		vpCmd tea.Cmd
+	)
 
 	m.textarea, tiCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
@@ -167,7 +204,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addMessage("Bot: Thinking...", false, true) // placeholder for bot response
 			m.viewport.GotoBottom()
 
-			return m, m.fetchOllamaResponse(userInput)
+			// Start the spinner and fetch the response concurrently
+			return m, tea.Batch(
+				m.fetchOllamaResponse(userInput),
+				spinner.Tick,
+			)
 		}
 
 	case ollamaResponseMsg:
@@ -268,21 +309,29 @@ func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("An error occurred: %v\nPress Esc or Ctrl+C to quit.", m.err)
 	}
-	loadingIndicator := ""
+
+	// Header with model, provider, and session info
+	header := fmt.Sprintf(" Model: %s | Provider: %s | Session: %s ",
+		m.modelName, m.provider, m.sessionID)
+	headerView := m.headerStyle.Render(header)
+
+	// Help hint for scrolling and quitting
+	help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(
+		"↑/↓ scroll • PgUp/PgDn • Mouse wheel • Esc/Ctrl+C quit",
+	)
+
+	// Input area with spinner if loading
+	input := m.textarea.View()
 	if m.loading {
-		loadingIndicator = " (loading...)"
+		input += " " + m.spin.View() + " Thinking..."
 	}
 
-   // Help hint for scrolling, mouse wheel, and quitting
-   help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(
-       "↑/↓ scroll  PgUp/PgDn page scroll  Mouse wheel scroll  Esc/Ctrl+C quit",
-   )
-   // Render viewport, help line, and input area
-   return fmt.Sprintf(
-       "%s\n%s\n\n%s%s",
-       m.viewport.View(),
-       help,
-       m.textarea.View(),
-       loadingIndicator,
-   ) + "\n"
+	// Combine header, viewport, help, and input views
+	return fmt.Sprintf(
+		"%s\n\n%s\n\n%s\n%s\n",
+		headerView,
+		m.viewport.View(),
+		help,
+		input,
+	)
 }

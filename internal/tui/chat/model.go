@@ -125,10 +125,20 @@ func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var (
-		tiCmd tea.Cmd
-		vpCmd tea.Cmd
-	)
+   // Intercept scroll keys to allow scrolling the chat viewport even when the textarea is focused
+   if keyMsg, ok := msg.(tea.KeyMsg); ok {
+       switch keyMsg.Type {
+       case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+           // Scroll the viewport
+           var vpCmd tea.Cmd
+           m.viewport, vpCmd = m.viewport.Update(keyMsg)
+           return m, vpCmd
+       }
+   }
+   var (
+       tiCmd tea.Cmd
+       vpCmd tea.Cmd
+   )
 
 	m.textarea, tiCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
@@ -263,10 +273,16 @@ func (m Model) View() string {
 		loadingIndicator = " (loading...)"
 	}
 
-	return fmt.Sprintf(
-		"%s\n\n%s%s",
-		m.viewport.View(),
-		m.textarea.View(),
-		loadingIndicator,
-	) + "\n"
+   // Help hint for scrolling, mouse wheel, and quitting
+   help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(
+       "↑/↓ scroll  PgUp/PgDn page scroll  Mouse wheel scroll  Esc/Ctrl+C quit",
+   )
+   // Render viewport, help line, and input area
+   return fmt.Sprintf(
+       "%s\n%s\n\n%s%s",
+       m.viewport.View(),
+       help,
+       m.textarea.View(),
+       loadingIndicator,
+   ) + "\n"
 }

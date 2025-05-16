@@ -94,9 +94,10 @@ func Query(ctx context.Context, ollamaHostURL, modelName, prompt string) (string
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		log.Debug("Sending Ollama query", "url", apiURL, "model", modelName, "attempt", i+1)
-		client := &http.Client{} // Consider creating a shared client if performance is critical
-		resp, httpErr := client.Do(req)
+           // Send the request with a timeout from configuration
+           log.Debug("Sending Ollama query", "url", apiURL, "model", modelName, "attempt", i+1)
+           client := &http.Client{Timeout: appCfg.OllamaRequestTimeout}
+           resp, httpErr := client.Do(req)
 		lastErr = httpErr // Store the latest error
 
 		if httpErr != nil {

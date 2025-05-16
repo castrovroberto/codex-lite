@@ -58,7 +58,12 @@ var chatCmd = &cobra.Command{
 		lipgloss.SetColorProfile(termenv.ANSI256)
 
 		// Create and run the Bubble Tea program
-		p := tea.NewProgram(chatAppModel, tea.WithAltScreen()) // Use tea alias
+       // Create and run the Bubble Tea program with mouse support for scrolling
+       p := tea.NewProgram(
+           chatAppModel,
+           tea.WithAltScreen(),
+           tea.WithMouseCellMotion(),
+       )
 
 		if _, err := p.Run(); err != nil {
 			log.Error("Chat TUI failed", "error", err)

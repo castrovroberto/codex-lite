@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,7 @@ type AppConfig struct {
 	OllamaRequestTimeout   time.Duration `mapstructure:"ollama_request_timeout"`
 	OllamaKeepAlive        string        `mapstructure:"ollama_keep_alive"`
 	MaxConcurrentAnalyzers int           `mapstructure:"max_concurrent_analyzers"`
+	WorkspaceRoot          string        `mapstructure:"workspace_root"`
 
 	// Add other global settings here
 }
@@ -47,6 +50,7 @@ func LoadConfig(cfgFile string) error {
 		viper.SetDefault("ollama_host_url", "http://localhost:11434") // Default Ollama URL
 		viper.SetDefault("ollama_request_timeout", "120s")            // Default timeout for Ollama requests
 		viper.SetDefault("ollama_keep_alive", "5m")                   // Default keep_alive for Ollama models
+		viper.SetDefault("workspace_root", ".")                       // Default to current directory
 
 		if cfgFile != "" {
 			// Use config file from the flag.
@@ -59,9 +63,14 @@ func LoadConfig(cfgFile string) error {
 				viper.AddConfigPath(home)                               // ~/.codex-lite.yaml
 			}
 			viper.AddConfigPath(".")           // ./config.yaml or ./.codex-lite.yaml
-			viper.SetConfigName("config")      // Default config file name (config.yaml, config.json etc.)
 			viper.AddConfigPath(".codex-lite") // ./.codex-lite/config.yaml
-			viper.SetConfigName(".codex-lite") // .codex-lite.yaml
+
+			// Try both config names
+			viper.SetConfigName(".codex-lite")
+			if err := viper.ReadInConfig(); err != nil {
+				// If .codex-lite.yaml is not found, try config.yaml
+				viper.SetConfigName("config")
+			}
 		}
 
 		viper.AutomaticEnv() // Read in environment variables that match
@@ -98,10 +107,40 @@ func LoadConfig(cfgFile string) error {
 			return
 		}
 
-		// TODO: Add validation logic here for Cfg fields if necessary.
-		// For example, check if OllamaHostURL is a valid URL.
+		// Validate configuration values
+		if Cfg.OllamaRequestTimeout < time.Second {
+			log.Printf("Warning: ollama_request_timeout is too low (%v), setting to default (120s)", Cfg.OllamaRequestTimeout)
+			Cfg.OllamaRequestTimeout = 120 * time.Second
+		} else if Cfg.OllamaRequestTimeout > 10*time.Minute {
+			log.Printf("Warning: ollama_request_timeout is too high (%v), setting to maximum (10m)", Cfg.OllamaRequestTimeout)
+			Cfg.OllamaRequestTimeout = 10 * time.Minute
+		}
+
+		if Cfg.MaxConcurrentAnalyzers < 1 {
+			log.Printf("Warning: max_concurrent_analyzers must be at least 1, setting to default (5)")
+			Cfg.MaxConcurrentAnalyzers = 5
+		} else if Cfg.MaxConcurrentAnalyzers > 20 {
+			log.Printf("Warning: max_concurrent_analyzers is too high (%d), setting to maximum (20)", Cfg.MaxConcurrentAnalyzers)
+			Cfg.MaxConcurrentAnalyzers = 20
+		}
+
+		if Cfg.LogLevel != "" && !isValidLogLevel(Cfg.LogLevel) {
+			log.Printf("Warning: invalid log_level '%s', setting to default (info)", Cfg.LogLevel)
+			Cfg.LogLevel = "info"
+		}
 	})
 	return loadErr
+}
+
+// isValidLogLevel checks if the provided log level is valid
+func isValidLogLevel(level string) bool {
+	validLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+	return validLevels[strings.ToLower(level)]
 }
 
 // GetConfig returns the loaded application configuration.

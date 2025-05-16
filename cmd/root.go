@@ -1,14 +1,15 @@
 /*
 Copyright © 2024 Roberto Castro roberto.castro@example.com
-
 */
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/castrovroberto/codex-lite/internal/config" // Assuming this path is correct
+	"github.com/castrovroberto/codex-lite/internal/contextkeys"
 	"github.com/castrovroberto/codex-lite/internal/logger" // New import
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -38,6 +39,13 @@ to quickly create a Cobra application.`,
 			return fmt.Errorf("failed to load configuration: %w", err)
 		}
 		logger.InitLogger(config.Cfg.LogLevel) // Initialize logger after config is loaded
+
+		// Create a new context with config and logger
+		ctx := cmd.Context()
+		ctx = context.WithValue(ctx, contextkeys.ConfigKey, &config.Cfg) // Store as pointer
+		ctx = context.WithValue(ctx, contextkeys.LoggerKey, logger.Get())
+		cmd.SetContext(ctx)
+
 		return nil
 	},
 }

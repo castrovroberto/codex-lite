@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+
 	//"log/slog" // Using slog from the context
 
 	"github.com/castrovroberto/codex-lite/internal/agents"
@@ -80,35 +81,40 @@ func (o *BasicOrchestrator) RunAgents(
 ) ([]agents.Result, error) {
 	results := make([]agents.Result, 0, len(agentNames))
 	log := contextkeys.LoggerFromContext(ctx)
-	appCfg := contextkeys.ConfigFromContext(ctx) // Retrieves config.AppConfig
-
-	// Use the DefaultModel field from AppConfig
+	appCfgPtr := contextkeys.ConfigPtrFromContext(ctx)
+	if appCfgPtr == nil {
+		if log != nil {
+			log.Error("AppConfig not found in context; cannot run agents", "file", filePath)
+		}
+		return nil, fmt.Errorf("AppConfig not found in context")
+	}
+	appCfg := *appCfgPtr
 	modelForAgents := appCfg.DefaultModel
 	if modelForAgents == "" {
-		log.Warn("No default model configured in AppConfig, agents might fail if they require a model name.")
-		// Depending on agent requirements, you might set a fallback or return an error.
-		// For now, we'll let agents handle missing model names if they can.
-	} else {
-		log.Debug("Orchestrator using model for agents", "model", modelForAgents)
+		if log != nil {
+			log.Warn("No default model configured in AppConfig, agents might fail if they require a model name.")
+		}
 	}
-
 	if len(agentNames) == 0 {
-		log.Info("No agents specified to run.", "file", filePath)
-		return results, nil // Or return an error if agents are mandatory
+		if log != nil {
+			log.Info("No agents specified to run.", "file", filePath)
+		}
+		return results, nil
 	}
-
 	for _, currentAgentName := range agentNames {
 		select {
 		case <-ctx.Done():
-			log.Info("Agent orchestration cancelled by context", "file", filePath, "last_agent_to_run", currentAgentName)
+			if log != nil {
+				log.Info("Agent orchestration cancelled by context", "file", filePath, "last_agent_to_run", currentAgentName)
+			}
 			return results, ctx.Err()
 		default:
-			// Continue processing
 		}
-
 		agent, err := o.GetAgent(currentAgentName)
 		if err != nil {
-			log.Warn("Requested agent not found, skipping", "agent_name", currentAgentName, "file", filePath, "error", err.Error())
+			if log != nil {
+				log.Warn("Requested agent not found, skipping", "agent_name", currentAgentName, "file", filePath, "error", err.Error())
+			}
 			results = append(results, agents.Result{
 				AgentName: currentAgentName,
 				File:      filePath,
@@ -116,25 +122,25 @@ func (o *BasicOrchestrator) RunAgents(
 			})
 			continue
 		}
-
-		log.Info("Running agent", "agent_name", agent.Name(), "file", filePath, "model_name_for_agent", modelForAgents)
-
-		// Pass the model name (modelForAgents) to the agent's Analyze method
+		if log != nil {
+			log.Info("Running agent", "agent_name", agent.Name(), "file", filePath, "model_name_for_agent", modelForAgents)
+		}
 		result, agentErr := agent.Analyze(ctx, modelForAgents, filePath, fileContent)
 		if agentErr != nil {
-			log.Error("Agent execution failed", "agent_name", agent.Name(), "file", filePath, "error", agentErr.Error())
-			// Append a result even if there's an error from the agent
+			if log != nil {
+				log.Error("Agent execution failed", "agent_name", agent.Name(), "file", filePath, "error", agentErr.Error())
+			}
 			results = append(results, agents.Result{
 				AgentName: agent.Name(),
 				File:      filePath,
-				Error:     agentErr, // Store the agent's error
+				Error:     agentErr,
 			})
-			// Decide if one agent error should stop all others or just continue
 			continue
 		}
 		results = append(results, result)
 	}
-
-	log.Debug("Finished running agents", "file", filePath, "agents_processed_count", len(agentNames), "results_count", len(results))
+	if log != nil {
+		log.Debug("Finished running agents", "file", filePath, "agents_processed_count", len(agentNames), "results_count", len(results))
+	}
 	return results, nil
 }

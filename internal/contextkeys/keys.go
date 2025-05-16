@@ -27,6 +27,15 @@ func ConfigFromContext(ctx context.Context) config.AppConfig { // Returns a stru
 	return config.AppConfig{} // Returns a zero-value struct
 }
 
+// ConfigPtrFromContext retrieves the AppConfig from the context.
+// It returns a pointer to AppConfig, or nil if not found.
+func ConfigPtrFromContext(ctx context.Context) *config.AppConfig {
+	if cfg, ok := ctx.Value(ConfigKey).(*config.AppConfig); ok {
+		return cfg
+	}
+	return nil
+}
+
 // LoggerFromContext retrieves the slog.Logger from the context.
 // It returns nil if not found, so callers should check.
 func LoggerFromContext(ctx context.Context) *slog.Logger { // Returns a pointer

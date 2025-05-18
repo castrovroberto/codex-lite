@@ -15,15 +15,23 @@ import (
 
 // AppConfig holds the application's global configuration.
 type AppConfig struct {
-	DefaultModel           string        `mapstructure:"default_model"`
-	LogLevel               string        `mapstructure:"log_level"`
-	OllamaHostURL          string        `mapstructure:"ollama_host_url"`
-	OllamaRequestTimeout   time.Duration `mapstructure:"ollama_request_timeout"`
-	OllamaKeepAlive        string        `mapstructure:"ollama_keep_alive"`
-	MaxConcurrentAnalyzers int           `mapstructure:"max_concurrent_analyzers"`
-	WorkspaceRoot          string        `mapstructure:"workspace_root"`
+	DefaultModel                  string        `mapstructure:"default_model"`
+	LogLevel                      string        `mapstructure:"log_level"`
+	OllamaHostURL                 string        `mapstructure:"ollama_host_url"`
+	OllamaRequestTimeout          time.Duration `mapstructure:"ollama_request_timeout"`
+	OllamaKeepAlive               string        `mapstructure:"ollama_keep_alive"`
+	ChatSystemPromptFile          string        `mapstructure:"chat_system_prompt_file"` // New: Path to the system prompt file for chat
+	MaxConcurrentAnalyzers        int           `mapstructure:"max_concurrent_analyzers"`
+	WorkspaceRoot                 string        `mapstructure:"workspace_root"`
+	loadedChatSystemPromptContent string        // Unexported field to store the loaded content
 
 	// Add other global settings here
+}
+
+// GetLoadedChatSystemPrompt returns the content of the system prompt file after it has been loaded.
+// It provides safe access to the unexported loadedChatSystemPromptContent field.
+func (ac *AppConfig) GetLoadedChatSystemPrompt() string {
+	return ac.loadedChatSystemPromptContent
 }
 
 // Sentinel errors for configuration loading.
@@ -50,6 +58,7 @@ func LoadConfig(cfgFile string) error {
 		viper.SetDefault("ollama_host_url", "http://localhost:11434") // Default Ollama URL
 		viper.SetDefault("ollama_request_timeout", "120s")            // Default timeout for Ollama requests
 		viper.SetDefault("ollama_keep_alive", "5m")                   // Default keep_alive for Ollama models
+		viper.SetDefault("chat_system_prompt_file", "")               // Default to empty, meaning no external file unless specified
 		viper.SetDefault("workspace_root", ".")                       // Default to current directory
 
 		if cfgFile != "" {
@@ -80,6 +89,7 @@ func LoadConfig(cfgFile string) error {
 		_ = viper.BindEnv("ollama_host_url", "CODEXLITE_OLLAMA_HOST_URL")
 		_ = viper.BindEnv("ollama_request_timeout", "CODEXLITE_OLLAMA_REQUEST_TIMEOUT")
 		_ = viper.BindEnv("ollama_keep_alive", "CODEXLITE_OLLAMA_KEEP_ALIVE")
+		_ = viper.BindEnv("chat_system_prompt_file", "CODEXLITE_CHAT_SYSTEM_PROMPT_FILE") // Env var for the file path
 
 		// Attempt to read the configuration file.
 		if err := viper.ReadInConfig(); err != nil {
@@ -105,6 +115,32 @@ func LoadConfig(cfgFile string) error {
 		if err := viper.Unmarshal(&Cfg); err != nil {
 			loadErr = fmt.Errorf("%w: %v", ErrConfigUnmarshal, err)
 			return
+		}
+
+		// Load chat system prompt from file if specified
+		if Cfg.ChatSystemPromptFile != "" {
+			// Attempt to make path absolute if not already, or resolve relative to config/workspace
+			promptFilePath := Cfg.ChatSystemPromptFile
+			if !filepath.IsAbs(promptFilePath) {
+				// Prefer relative to workspace root if Cfg.WorkspaceRoot is set and valid,
+				// otherwise try relative to current dir (where codex-lite is run or config found).
+				// For simplicity here, let's assume it can be relative to current working dir or an absolute path.
+				// A more robust solution might check relative to config file location or workspace_root.
+			}
+			content, err := os.ReadFile(promptFilePath)
+			if err != nil {
+				log.Printf("Warning: Failed to read chat system prompt file specified at '%s': %v. Using no specific system prompt.", promptFilePath, err)
+				Cfg.loadedChatSystemPromptContent = "" // Ensure it's empty on error
+			} else {
+				Cfg.loadedChatSystemPromptContent = strings.TrimSpace(string(content))
+				if Cfg.loadedChatSystemPromptContent == "" {
+					log.Printf("Warning: Chat system prompt file '%s' was empty.", promptFilePath)
+				}
+			}
+		} else {
+			// If no file is specified, use a default built-in prompt or leave it empty
+			// For now, let's use the previous default if no file is specified.
+			Cfg.loadedChatSystemPromptContent = "You are a helpful and concise AI assistant."
 		}
 
 		// Validate configuration values

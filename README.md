@@ -128,18 +128,21 @@ Codex Lite can be configured in three ways (in order of precedence: flags > env 
     ```yaml
     # Ollama settings
     ollama_host_url: "http://localhost:11434" # URL of your Ollama instance
-    default_model: "llama2"                  # Default model to use for chat and analysis
+    default_model: "llama3:latest"           # Default model to use for chat and analysis
+    ollama_request_timeout: "120s"           # Timeout for Ollama API requests
+    ollama_keep_alive: "5m"                  # How long models stay loaded
 
-    # Agents configuration (optional, can be overridden by flags)
-    # default_agent_list:
-    #   - "explain"
-    #   - "syntax"
+    # Chat specific settings
+    # Defines the AI's default behavior in chat by loading the specified file.
+    # If empty or file not found, a default prompt is used.
+    chat_system_prompt_file: "system-prompt.md"
+
+    # Analysis settings (example)
+    # max_concurrent_analyzers: 5
+    # workspace_root: "."
 
     # Logging level (e.g., debug, info, warn, error)
     log_level: "info"
-
-    # Workspace root (useful for some agents like 'advanced' that might need project context)
-    # workspace_root: "/path/to/your/main/coding/directory"
     ```
 
 2.  **Environment Variables:**
@@ -148,6 +151,7 @@ Codex Lite can be configured in three ways (in order of precedence: flags > env 
     ```bash
     export CODEXLITE_OLLAMA_HOST_URL="http://localhost:11434"
     export CODEXLITE_DEFAULT_MODEL="mistral"
+    export CODEXLITE_CHAT_SYSTEM_PROMPT_FILE="path/to/your/system-prompt.md"
     export CODEXLITE_LOG_LEVEL="debug"
     ```
 

@@ -333,7 +333,4 @@ Distributed under the **MIT License**. See `LICENSE` for more information.
 *   **Ollama Team:** For making local LLM hosting accessible.
 *   **Charmbracelet Team:** For `bubbletea`, `lipgloss`, and other fantastic TUI libraries.
 *   **spf13:** For `cobra` and `viper`.
-*   Any other libraries or inspirations.
 
----
-*This README has been updated. Please review and adjust as needed.*

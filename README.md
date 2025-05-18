@@ -50,6 +50,8 @@ The tool is built using Go and features a Terminal User Interface (TUI) powered 
     -   Session management: Continue previous chats and list available sessions.
     -   Chat history saved locally (`~/.codex-lite/chat_history/`).
     -   User-friendly TUI chat interface.
+    -   Displays AI response processing time for each message.
+    -   Live "thinking" timer in the status bar while waiting for AI response.
 -   **Ollama Integration:** Seamlessly connects to your local Ollama instance.
 -   **Flexible Configuration:**
     -   YAML configuration file (`$HOME/.codex-lite.yaml` or `./.codex-lite.yaml`).
@@ -122,7 +124,7 @@ Codex Lite can be configured in three ways (in order of precedence: flags > env 
 
 1.  **Configuration File:**
     Create a YAML file named `.codex-lite.yaml` in your home directory (`~/.codex-lite.yaml`) or the current project directory (`./.codex-lite.yaml`).
-    You can copy and modify the provided `.codex-lite.yaml` as a starting point.
+    An example `system-prompt.md` is also provided in the repository which can be referenced by `chat_system_prompt_file`.
 
     Example `.codex-lite.yaml`:
     ```yaml
@@ -134,7 +136,8 @@ Codex Lite can be configured in three ways (in order of precedence: flags > env 
 
     # Chat specific settings
     # Defines the AI's default behavior in chat by loading the specified file.
-    # If empty or file not found, a default prompt is used.
+    # Path to a markdown file (e.g., "system-prompt.md" or "/abs/path/to/prompt.md").
+    # If empty, file not found, or file is empty, a default internal prompt is used.
     chat_system_prompt_file: "system-prompt.md"
 
     # Analysis settings (example)

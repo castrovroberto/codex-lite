@@ -99,7 +99,8 @@ type Model struct {
 	width  int
 	height int
 
-	thinkingStartTime time.Time // New: To track when Ollama request started for live timer
+	thinkingStartTime time.Time // To track when Ollama request started for live timer
+	chatStartTime     time.Time // New: To track the actual start of the chat session
 
 	// New: Add tool registry
 	toolRegistry *agent.Registry
@@ -175,7 +176,7 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 	m := Model{
 		headerStyle:       headerStyle,
 		provider:          "Ollama",
-		sessionID:         time.Now().Format("2006-01-02 15:04:05"),
+		sessionID:         time.Now().Format("20060102150405"),
 		modelName:         modelName,
 		status:            "Connected",
 		spin:              sp,
@@ -196,6 +197,7 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		placeholderIndex:  -1,
 		editingIndex:      -1,
 		isEditing:         false,
+		chatStartTime:     time.Now(),
 	}
 
 	// Initialize tool registry
@@ -333,6 +335,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
+			// Save history before quitting
+			if err := m.SaveHistory(); err != nil {
+				// Log the error or display it. For now, let's use the model's error field.
+				// This error won't be visible long as the app quits immediately.
+				// Consider logging to a file or stderr for better visibility of save errors.
+				log := logger.Get() // Assuming logger.Get() is accessible
+				log.Error("Failed to save chat history on exit", "sessionID", m.sessionID, "error", err)
+				m.err = fmt.Errorf("failed to save history: %w", err) // Sets error on model, though app quits
+			}
 			return m, tea.Quit
 		case tea.KeyEnter:
 			if m.textarea.Value() != "" && !m.loading {

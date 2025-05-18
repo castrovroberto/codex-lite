@@ -19,11 +19,13 @@ type ChatHistory struct {
 
 // SaveHistory saves the current chat history to a file
 func (m *Model) SaveHistory() error {
+	now := time.Now() // Get current time once
 	history := ChatHistory{
 		SessionID: m.sessionID,
 		ModelName: m.modelName,
 		Messages:  m.messages,
-		StartTime: time.Now(),
+		StartTime: m.chatStartTime, // Use the actual chat start time from the model
+		EndTime:   &now,            // Set the end time to when history is saved
 	}
 
 	// Create history directory if it doesn't exist

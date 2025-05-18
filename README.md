@@ -141,7 +141,8 @@ Codex Lite can be configured in three ways (in order of precedence: flags > env 
     chat_system_prompt_file: "system-prompt.md"
 
     # Analysis settings (example)
-    # max_concurrent_analyzers: 5
+    # max_concurrent_analyzers: 5 # For file scanning, if different from agent concurrency
+    max_agent_concurrency: 1    # Max agents the orchestrator runs in parallel (1 for sequential, >1 for parallel)
     # workspace_root: "."
 
     # Logging level (e.g., debug, info, warn, error)
@@ -155,6 +156,7 @@ Codex Lite can be configured in three ways (in order of precedence: flags > env 
     export CODEXLITE_OLLAMA_HOST_URL="http://localhost:11434"
     export CODEXLITE_DEFAULT_MODEL="mistral"
     export CODEXLITE_CHAT_SYSTEM_PROMPT_FILE="path/to/your/system-prompt.md"
+    export CODEXLITE_MAX_AGENT_CONCURRENCY=4
     export CODEXLITE_LOG_LEVEL="debug"
     ```
 

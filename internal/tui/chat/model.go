@@ -38,6 +38,9 @@ type (
 	}
 )
 
+// Add a new message type for main context cancellation
+type mainContextCancelledMsg struct{}
+
 // chatMessage holds a single chat entry for re-rendering
 type chatMessage struct {
 	text         string
@@ -95,15 +98,22 @@ type Model struct {
 	editingIndex     int  // New: for message editing
 	isEditing        bool // New: editing state
 
-	// Window dimensions
-	width  int
-	height int
-
 	thinkingStartTime time.Time // To track when Ollama request started for live timer
 	chatStartTime     time.Time // New: To track the actual start of the chat session
 
 	// New: Add tool registry
 	toolRegistry *agent.Registry
+
+	// Available slash commands for suggestions
+	availableCommands []string
+}
+
+var defaultSlashCommands = []string{
+	"/help",
+	"/model ", // Suggest space for model name
+	"/clear",
+	"/session ", // Suggest space for session id or action
+	"/quit",
 }
 
 func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) Model {
@@ -198,6 +208,7 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		editingIndex:      -1,
 		isEditing:         false,
 		chatStartTime:     time.Now(),
+		availableCommands: defaultSlashCommands, // Initialize with default commands
 	}
 
 	// Initialize tool registry
@@ -231,7 +242,15 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 }
 
 func (m Model) Init() tea.Cmd {
-	return textarea.Blink
+	cmds := []tea.Cmd{m.spin.Tick, textarea.Blink}
+	cmds = append(cmds, func() tea.Msg {
+		if m.parentCtx != nil {
+			<-m.parentCtx.Done()
+			return mainContextCancelledMsg{}
+		}
+		return nil
+	})
+	return tea.Batch(cmds...)
 }
 
 func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
@@ -332,52 +351,98 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
 
+	case mainContextCancelledMsg:
+		logger.Get().Info("Main context cancelled, attempting to save chat history and quit TUI.")
+		if err := m.SaveHistory(); err != nil {
+			m.err = fmt.Errorf("error saving history on context cancellation: %w", err)
+			logger.Get().Error("Failed to save chat history on context cancellation", "error", err, "sessionID", m.sessionID)
+		} else {
+			logger.Get().Info("Chat history saved successfully on context cancellation.", "sessionID", m.sessionID)
+		}
+		return m, tea.Quit
+
 	case tea.KeyMsg:
+		// Handle Ctrl+C and Esc (when not editing) first as they cause an exit.
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
-			// Save history before quitting
+		case tea.KeyCtrlC:
+			logger.Get().Info("Ctrl+C pressed, attempting to save chat history and quit TUI.")
 			if err := m.SaveHistory(); err != nil {
-				// Log the error or display it. For now, let's use the model's error field.
-				// This error won't be visible long as the app quits immediately.
-				// Consider logging to a file or stderr for better visibility of save errors.
-				log := logger.Get() // Assuming logger.Get() is accessible
-				log.Error("Failed to save chat history on exit", "sessionID", m.sessionID, "error", err)
-				m.err = fmt.Errorf("failed to save history: %w", err) // Sets error on model, though app quits
+				m.err = fmt.Errorf("error saving history on Ctrl+C: %w", err)
+				logger.Get().Error("Failed to save chat history on Ctrl+C", "error", err, "sessionID", m.sessionID)
+			} else {
+				logger.Get().Info("Chat history saved successfully on Ctrl+C.", "sessionID", m.sessionID)
 			}
 			return m, tea.Quit
-		case tea.KeyEnter:
-			if m.textarea.Value() != "" && !m.loading {
-				m.thinkingStartTime = time.Now() // Set start time for live timer
-				m.loading = true
-				userPrompt := m.textarea.Value()
-				m.addMessage(chatMessage{text: userPrompt, sender: "You", timestamp: time.Now()})
+		case tea.KeyEsc:
+			if !m.isEditing { // If not editing, Esc quits and saves
+				logger.Get().Info("Escape pressed (not editing), attempting to save chat history and quit TUI.")
+				if err := m.SaveHistory(); err != nil {
+					m.err = fmt.Errorf("error saving history on Escape: %w", err)
+					logger.Get().Error("Failed to save chat history on Escape", "error", err, "sessionID", m.sessionID)
+				} else {
+					logger.Get().Info("Chat history saved successfully on Escape.", "sessionID", m.sessionID)
+				}
+				return m, tea.Quit
+			} else { // If editing, Esc cancels editing mode
+				m.isEditing = false
+				m.editingIndex = -1
+				m.textarea.Blur()
 				m.textarea.Reset()
-				m.viewport.GotoBottom()
-				m.addMessage(chatMessage{text: "...", sender: "AI", timestamp: time.Now(), placeholder: true})
-				m.placeholderIndex = len(m.messages) - 1
-				cmds = append(cmds, m.spin.Tick, m.fetchOllamaResponse(userPrompt))
-			} else {
+				m.textarea.Placeholder = "Type your message... (Ctrl+E to edit last, Tab for completion)"
+				// Let the textarea also process the Esc key (e.g., to clear its internal state if any)
 				m.textarea, cmd = m.textarea.Update(msg)
 				cmds = append(cmds, cmd)
+				// No return here, allow other processing or batching of cmds
 			}
-		case tea.KeyCtrlE:
-			m.startEditing()
-			// After starting to edit, the textarea has the old message.
-			// Pass the event to textarea in case it has specific Ctrl+E handling or for consistency.
-			m.textarea, cmd = m.textarea.Update(msg)
-			cmds = append(cmds, cmd)
-		case tea.KeyTab:
-			if len(m.suggestions) > 0 {
-				m.selected = (m.selected + 1) % len(m.suggestions)
-				// Tab consumed for suggestion cycling, do not pass to textarea
-			} else {
-				// If no suggestions, let textarea handle Tab
+		default:
+			// For keys not handled by the switch above (Ctrl+C, Esc),
+			// use the string representation for other specific keys or pass to textarea.
+			switch keyStr := msg.String(); keyStr {
+			case "enter":
+				// If suggestions are active and one is selected, apply it first
+				if len(m.suggestions) > 0 && m.selected >= 0 && m.selected < len(m.suggestions) {
+					m.textarea.SetValue(m.suggestions[m.selected])
+					m.textarea.CursorEnd() // Move cursor to end after setting value
+					m.suggestions = nil    // Clear suggestions
+					m.selected = -1        // Reset selection
+					// The message will be sent with the applied suggestion in the next part of this case
+				}
+
+				if m.textarea.Value() != "" && !m.loading {
+					m.thinkingStartTime = time.Now() // Set start time for live timer
+					m.loading = true
+					userPrompt := m.textarea.Value()
+					m.addMessage(chatMessage{text: userPrompt, sender: "You", timestamp: time.Now()})
+					m.textarea.Reset()
+					m.viewport.GotoBottom()
+					m.addMessage(chatMessage{text: "...", sender: "AI", timestamp: time.Now(), placeholder: true})
+					m.placeholderIndex = len(m.messages) - 1
+					cmds = append(cmds, m.spin.Tick, m.fetchOllamaResponse(userPrompt))
+				} else {
+					// If enter is pressed on empty textarea or while loading, let textarea handle it (might do nothing or add newline)
+					m.textarea, cmd = m.textarea.Update(msg)
+					cmds = append(cmds, cmd)
+				}
+			case "ctrl+e":
+				m.startEditing()
+				m.textarea, cmd = m.textarea.Update(msg) // Pass to textarea for consistency or specific handling
+				cmds = append(cmds, cmd)
+			case "tab":
+				if len(m.suggestions) > 0 {
+					m.selected = (m.selected + 1) % len(m.suggestions)
+					// Tab consumed for suggestion cycling, do not pass to textarea
+				} else {
+					m.textarea, cmd = m.textarea.Update(msg) // If no suggestions, let textarea handle Tab
+					cmds = append(cmds, cmd)
+				}
+				// After handling tab, update suggestions in case the input text could trigger new ones (though unlikely for pure tab)
+				m.updateSuggestions(m.textarea.Value())
+			default: // Crucial for typing, backspace, arrows within textarea
 				m.textarea, cmd = m.textarea.Update(msg)
 				cmds = append(cmds, cmd)
+				// After any key that modifies the textarea, update suggestions
+				m.updateSuggestions(m.textarea.Value())
 			}
-		default: // Crucial for typing, backspace, arrows within textarea
-			m.textarea, cmd = m.textarea.Update(msg)
-			cmds = append(cmds, cmd)
 		}
 
 	case spinner.TickMsg:
@@ -401,16 +466,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ollamaErrorMsg:
 		m.loading = false
-		errorMsg := m.errorStyle.Render(fmt.Sprintf("Error: %v", msg))
+		errorMsgString := fmt.Sprintf("Error: %v", error(msg)) // Convert ollamaErrorMsg to error then string
 		m.replacePlaceholder(chatMessage{
-			text:      errorMsg,
+			text:      m.errorStyle.Render(errorMsgString), // Ensure errorStyle is applied
 			sender:    "System",
 			timestamp: time.Now(),
 		})
 
 	case errMsg:
 		m.err = msg
-		// Potentially update status or log
 
 	// New: Check if the response is a tool invocation (assuming this was intended from previous structure)
 	// This case might need to be reviewed if it's from an ollamaSuccessResponseMsg.text
@@ -451,7 +515,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// If viewport needs to react to any other messages (e.g., mouse events not directly handled)
-	// m.viewport, cmd = m.viewport.Update(msg) // Be careful not to double-update on WindowSizeMsg
+	// Check if viewport update is needed, but avoid double-updating on WindowSizeMsg.
+	// This was commented out, let's keep it that way unless a specific need arises.
+	// m.viewport, cmd = m.viewport.Update(msg)
 	// cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
@@ -584,10 +650,24 @@ func (m *Model) startEditing() {
 	}
 }
 
-// New: Handle auto-completion
+// updateSuggestions populates the suggestions list based on the input.
+// For now, it suggests slash commands if the input starts with "/".
 func (m *Model) updateSuggestions(input string) {
-	// Implementation for context-aware suggestions
-	// This could include command completion, code completion, etc.
+	m.suggestions = nil // Clear previous suggestions
+	m.selected = -1     // Reset selection
+
+	if strings.HasPrefix(input, "/") {
+		var currentSuggestions []string
+		for _, cmd := range m.availableCommands {
+			if strings.HasPrefix(cmd, input) {
+				currentSuggestions = append(currentSuggestions, cmd)
+			}
+		}
+		if len(currentSuggestions) > 0 {
+			m.suggestions = currentSuggestions
+			m.selected = 0 // Default to selecting the first suggestion
+		}
+	}
 }
 
 func (m Model) View() string {
@@ -647,6 +727,20 @@ func (m Model) View() string {
 	view.WriteString(m.viewport.View())
 	view.WriteString("\n")
 	view.WriteString(m.textarea.View())
+
+	// Render suggestions if any
+	if len(m.suggestions) > 0 {
+		view.WriteString("\n") // Add a line break before suggestions
+		suggestionLines := make([]string, len(m.suggestions))
+		for i, sug := range m.suggestions {
+			if i == m.selected {
+				suggestionLines[i] = m.suggestionStyle.Copy().Reverse(true).Render("> " + sug)
+			} else {
+				suggestionLines[i] = m.suggestionStyle.Render("  " + sug)
+			}
+		}
+		view.WriteString(strings.Join(suggestionLines, "\n"))
+	}
 
 	// Status bar (optional, can show loading state, suggestions, etc.)
 	statusBar := ""

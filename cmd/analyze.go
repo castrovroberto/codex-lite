@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -241,20 +242,20 @@ Available models depend on your Ollama installation.`)
 
 			// Create error group for concurrent analysis
 			g, analysisCtx := errgroup.WithContext(ctxWithValues)
-			if appCfg.MaxConcurrentAnalyzers > 0 {
-				g.SetLimit(appCfg.MaxConcurrentAnalyzers)
+			if appCfg.MaxAgentConcurrency > 0 {
+				g.SetLimit(appCfg.MaxAgentConcurrency)
 			}
 
-			// Channel for collecting analysis results
-			resultsChan := make(chan string, len(filesToAnalyze))
+			// Channel for collecting analysis results (file-level summaries)
+			fileResultsChan := make(chan string, len(filesToAnalyze))
 
 			for i, filePath := range filesToAnalyze {
-				filePath := filePath
+				filePath := filePath // Capture range variable
 				fileNum := i + 1
 				g.Go(func() error {
 					gLog := contextkeys.LoggerFromContext(analysisCtx)
 					if gLog == nil {
-						gLog = log
+						gLog = log // Fallback to main logger
 						gLog.Warn("Logger not found in goroutine context, using main logger.", "file", filePath)
 					}
 					gLog.Info("Starting analysis for file", "file", filePath)
@@ -262,26 +263,71 @@ Available models depend on your Ollama installation.`)
 					fileContentBytes, err := os.ReadFile(filePath)
 					if err != nil {
 						msg := fmt.Sprintf("❌ Failed to read file %s: %v\n", filePath, err)
-						resultsChan <- msg
+						fileResultsChan <- msg
 						gLog.Error("Failed to read file", "file", filePath, "error", err)
-						return nil
+						return nil // Continue with other files
 					}
 
-					// Update TUI progress
+					// Update TUI progress for file scanning
 					if !noTui {
 						tuiModel.SetProgress(fileNum, len(filesToAnalyze), filepath.Base(filePath))
 					} else {
+						// This initial message will be followed by per-agent progress
 						fmt.Printf("Analyzing %s (%d/%d)...\n", filePath, fileNum, len(filesToAnalyze))
 					}
 
-					results, orchErr := agentOrchestrator.RunAgents(analysisCtx, agentsToRun, filePath, string(fileContentBytes))
-					if orchErr != nil {
-						msg := fmt.Sprintf("⚠️ Orchestrator error for %s: %v\n", filePath, orchErr)
-						resultsChan <- msg
-						gLog.Error("Orchestrator encountered an error for file", "file", filePath, "error", orchErr)
-						if errors.Is(orchErr, context.Canceled) || errors.Is(orchErr, context.DeadlineExceeded) {
-							return orchErr
+					// Channel for per-agent progress updates for this file
+					agentProgressChan := make(chan orchestrator.AgentProgressUpdate)
+
+					// Goroutine to handle progress updates for the current file
+					var progressWg sync.WaitGroup
+					progressWg.Add(1)
+					go func() {
+						defer progressWg.Done()
+						for update := range agentProgressChan {
+							if noTui {
+								// Plain text output for CLI progress
+								progressMsg := fmt.Sprintf("  [%s] Agent: %s (%d/%d) - %s",
+									filepath.Base(update.FilePath), update.AgentName, update.AgentIndex+1, update.TotalAgents, update.Status)
+								if update.Status == orchestrator.StatusCompleted || update.Status == orchestrator.StatusFailed || update.Status == orchestrator.StatusTimedOut {
+									progressMsg += fmt.Sprintf(" (%.2fs)", update.Duration.Seconds())
+								}
+								if update.Error != nil {
+									// Avoid printing full error details here to keep CLI output concise,
+									// the main result block will show the full error.
+									// But indicate an error occurred.
+									if update.Status == orchestrator.StatusTimedOut {
+										progressMsg += " - Timed out"
+									} else {
+										progressMsg += " - Error"
+									}
+								}
+								fmt.Println(progressMsg)
+							} else {
+								// For TUI mode, send the update to the TUI model.
+								// The tuiModel is a value type, but ProcessAgentUpdate internally uses
+								// the *tea.Program instance set on it via SetProgram.
+								tuiModel.ProcessAgentUpdate(update)
+							}
 						}
+					}()
+
+					results, orchErr := agentOrchestrator.RunAgents(analysisCtx, agentsToRun, filePath, string(fileContentBytes), agentProgressChan)
+
+					progressWg.Wait() // Wait for the progress handling goroutine to finish (channel closed)
+
+					if orchErr != nil {
+						// Orchestrator level error (e.g., context cancellation affecting the orchestrator itself)
+						// This is distinct from individual agent errors which are in `results[j].Error`
+						msg := fmt.Sprintf("⚠️ Orchestrator error for %s: %v\n", filePath, orchErr)
+						fileResultsChan <- msg
+						gLog.Error("Orchestrator encountered an error for file", "file", filePath, "error", orchErr)
+						// If the orchestrator itself is cancelled, we should propagate this error up
+						// to stop the errgroup for other files if it's a critical cancellation.
+						if errors.Is(orchErr, context.Canceled) || errors.Is(orchErr, context.DeadlineExceeded) {
+							return orchErr // Propagate to errgroup
+						}
+						// For other orchestrator errors, we might allow continuing with other files.
 					}
 
 					var output strings.Builder
@@ -343,7 +389,7 @@ To fix this:
 						}
 					}
 					output.WriteString("---\n")
-					resultsChan <- output.String()
+					fileResultsChan <- output.String()
 					return nil
 				})
 			}
@@ -351,7 +397,7 @@ To fix this:
 			// Collect results
 			var allResults strings.Builder
 			go func() {
-				for result := range resultsChan {
+				for result := range fileResultsChan {
 					if !noTui {
 						allResults.WriteString(result)
 						tuiModel.SetContent(allResults.String())
@@ -361,20 +407,28 @@ To fix this:
 				}
 			}()
 
-			// Wait for all analysis to complete
+			// Wait for all file analyses (and their progress goroutines) to complete
 			if err := g.Wait(); err != nil {
 				log.Error("Error occurred during concurrent file analysis", "error", err)
 				if !noTui {
 					tuiModel.SetError(fmt.Errorf("analysis group failed: %w", err))
 				}
-				return fmt.Errorf("analysis group failed: %w", err)
+				// Don't return error directly from RunE if it's a context cancellation,
+				// as cobra might print it verbosely. Log it and let main handle exit.
+				// The error is already logged.
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					// Suppress exit code for user-initiated cancellation
+					return nil
+				}
+				return fmt.Errorf("analysis group failed: %w", err) // For other errors
 			}
 
-			close(resultsChan)
+			// Ensure results channel is closed before TUI attempts to stop.
+			close(fileResultsChan)
 
 			if !noTui {
 				tuiModel.StopProcessing()
-				return tui.RunWithModel(tuiModel)
+				return tui.RunWithModel(&tuiModel)
 			}
 
 			log.Info("All file analyses finished.")

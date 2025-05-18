@@ -33,7 +33,7 @@ require (
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -65,10 +65,12 @@ require (
 	golang.org/x/term v0.31.0 // indirect
 )
 
-require github.com/stretchr/testify v1.8.4
+require (
+	github.com/alecthomas/chroma v0.10.0
+	github.com/stretchr/testify v1.8.4
+)
 
 require (
-	github.com/alecthomas/chroma v0.10.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.1.0 // indirect
 )

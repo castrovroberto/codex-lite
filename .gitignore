@@ -30,3 +30,7 @@ project/
 
 # binaries
 codex-lite
+
+# Docker files
+Dockerfile
+.dockerignore

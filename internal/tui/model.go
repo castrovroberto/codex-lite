@@ -45,29 +45,39 @@ var (
 // agentProgressMsg is a tea.Msg to send agent progress updates to the TUI model.
 type agentProgressMsg orchestrator.AgentProgressUpdate
 
+// New messages for overall content update and error reporting
+type ContentUpdateMsg string
+type ErrorMsg error
+
 // Model represents the main TUI model
 type Model struct {
-	viewport    viewport.Model
-	spinner     spinner.Model
-	progress    ProgressModel
-	header      HeaderModel
-	content     string
-	ready       bool
-	err         error
-	width       int
-	height      int
-	processing  bool
-	startTime   time.Time
-	elapsedTime time.Duration
-
-	program *tea.Program // To send messages from outside Bubble Tea loop
-	// Stores the latest progress update for each agent for a given file.
-	// Key: filePath, Value: (Key: agentName, Value: orchestrator.AgentProgressUpdate)
-	filesAgentProgress map[string]map[string]orchestrator.AgentProgressUpdate
-	// Stores the order of agents as they are announced for a given file
-	// Key: filePath, Value: []string (list of agent names in order)
+	viewport            viewport.Model
+	spinner             spinner.Model
+	progress            ProgressModel
+	header              HeaderModel
+	content             string
+	ready               bool
+	err                 error
+	width               int
+	height              int
+	processing          bool
+	startTime           time.Time
+	elapsedTime         time.Duration
+	program             *tea.Program // Program allows sending messages from outside the TUI
+	filesAgentProgress  map[string]map[string]orchestrator.AgentProgressUpdate
 	filesAgentOrder     map[string][]string
-	currentFileProgress string // Store the current file path being processed for agent progress display
+	currentFileProgress string // filename of the file currently being processed to show agent progress
+
+	// Used to display progress bar
+	progressFilesProcessed int
+	progressTotalFiles     int
+	progressFileName       string
+
+	processingDone bool // Indicates if all processing has finished
+	finalContent   string
+	timestamp      string
+	appName        string
+	modelName      string
 }
 
 // HeaderModel represents the header component
@@ -78,6 +88,7 @@ type HeaderModel struct {
 	status      string
 	startTime   time.Time
 	elapsedTime time.Duration
+	width       int
 }
 
 // NewModel creates a new TUI model
@@ -101,15 +112,15 @@ func NewModel(provider, model, sessionID string) Model {
 }
 
 // SetProgram stores the tea.Program instance on the model.
+// This is crucial for sending messages to the TUI from external goroutines.
 func (m *Model) SetProgram(p *tea.Program) {
 	m.program = p
 }
 
-// ProcessAgentUpdate is called from outside the TUI update loop (e.g., from cmd/analyze)
-// to send agent progress information into the TUI.
+// ProcessAgentUpdate is called by external goroutines to send agent progress updates to the TUI.
+// It sends a message that the TUI's Update function will handle.
 func (m *Model) ProcessAgentUpdate(update orchestrator.AgentProgressUpdate) {
 	if m.program != nil {
-		// Send the message to the Bubble Tea program's update loop
 		m.program.Send(agentProgressMsg(update))
 	}
 }
@@ -122,7 +133,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 // Update handles model updates
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
 		cmd  tea.Cmd
 		cmds []tea.Cmd
@@ -133,41 +144,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		default:
+			if m.ready {
+				m.viewport, cmd = m.viewport.Update(msg)
+				cmds = append(cmds, cmd)
+			}
 		}
 
 	case tea.WindowSizeMsg:
-		if !m.ready {
-			// Adjust height calculation for header, overall progress, and potentially agent progress area
-			headerHeight := 7   // Approximate height for header
-			progressHeight := 3 // Approximate height for overall progress bar
-			// agentProgressAreaHeight := 5 // Reserve some space for agent progress, adjust as needed
-			viewportHeight := msg.Height - headerHeight - progressHeight // - agentProgressAreaHeight
-			if viewportHeight < 1 {
-				viewportHeight = 1
-			}
-			m.viewport = viewport.New(msg.Width, viewportHeight)
-			m.viewport.Style = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("#5A189A"))
-			m.ready = true
-		} else {
-			headerHeight := 7
-			progressHeight := 3
-			// agentProgressAreaHeight := 5
-			viewportHeight := msg.Height - headerHeight - progressHeight // - agentProgressAreaHeight
-			if viewportHeight < 1 {
-				viewportHeight = 1
-			}
-			m.viewport.Width = msg.Width
-			m.viewport.Height = viewportHeight
-		}
 		m.width = msg.Width
 		m.height = msg.Height
+		m.header.width = msg.Width
+		// Update viewport size
+		// Subtract space for header, progress, and agent progress view
+		// Adjust this based on your layout
+		const headerHeight = 3       // Approximate height for header
+		const progressHeight = 3     // Approximate height for overall progress bar
+		const agentViewMinHeight = 5 // Min height for agent view area
+
+		viewportHeight := m.height - headerHeight - progressHeight
+		if m.processing && m.currentFileProgress != "" {
+			// If showing agent progress, allocate space for it
+			agentLines := 0
+			if order, ok := m.filesAgentOrder[m.currentFileProgress]; ok {
+				agentLines = len(order)
+			}
+			agentViewHeight := agentLines + 2 // +2 for padding/title
+			if agentViewHeight < agentViewMinHeight {
+				agentViewHeight = agentViewMinHeight
+			}
+			if agentViewHeight > viewportHeight/2 {
+				agentViewHeight = viewportHeight / 2
+			} // Cap agent view
+			viewportHeight -= agentViewHeight
+		}
+		if viewportHeight < 1 {
+			viewportHeight = 1
+		} // Ensure viewport height is at least 1
+
+		m.viewport.Width = msg.Width
+		m.viewport.Height = viewportHeight
+		return m, nil
 
 	case spinner.TickMsg:
-		var spinnerCmd tea.Cmd
-		m.spinner, spinnerCmd = m.spinner.Update(msg)
-		cmds = append(cmds, spinnerCmd)
+		if m.processing {
+			m.spinner, cmd = m.spinner.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		return m, cmd
 
 	case agentProgressMsg:
 		update := orchestrator.AgentProgressUpdate(msg)
@@ -192,24 +216,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.filesAgentOrder[update.FilePath] = append(m.filesAgentOrder[update.FilePath], update.AgentName)
 		}
 
+	case ContentUpdateMsg:
+		m.finalContent = string(msg)
+		m.viewport.SetContent(m.finalContent)
+		// Optionally scroll to bottom if new content always means new lines added
+		// m.viewport.GotoBottom()
+		return m, nil
+
+	case ErrorMsg:
+		m.err = msg
+		m.processing = false
+		m.processingDone = true
+		// The View method will display the error.
+		// We want to quit, but let the view show the error first.
+		// The quit is typically handled by the main analyzeCmd upon p.Run() returning.
+		// However, if we want to force quit from here, we can.
+		return m, tea.Quit // This will cause p.Run() in analyze.go to unblock.
+
+	case tea.QuitMsg:
+		return m, tea.Quit
+
+	default:
+		if !m.ready {
+			m.viewport, cmd = m.viewport.Update(msg)
+			m.ready = true // Assuming viewport readiness sets the model ready
+			cmds = append(cmds, cmd)
+		}
 	}
 
-	// Update viewport
-	m.viewport, cmd = m.viewport.Update(msg)
-	cmds = append(cmds, cmd)
-
-	// Update progress model (overall file progress)
-	var progressCmd tea.Cmd
-	m.progress, progressCmd = m.progress.Update(msg)
-	cmds = append(cmds, progressCmd)
-
-	// Update elapsed time if processing
-	if m.processing {
-		m.elapsedTime = time.Since(m.startTime)
-		m.header.elapsedTime = m.elapsedTime
-		cmds = append(cmds, tea.Tick(time.Second, func(t time.Time) tea.Msg {
-			return tickMsg(t)
-		}))
+	// If spinner is active, generate a tick command
+	if m.processing && !m.processingDone {
+		cmds = append(cmds, m.spinner.Tick)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -304,7 +341,15 @@ func (m Model) renderHeader() string {
 
 // SetContent updates the viewport content
 func (m *Model) SetContent(content string) {
-	m.viewport.SetContent(content)
+	m.finalContent = content // Assuming finalContent is the field for the main viewport
+	if m.program != nil {
+		// Send a message to ensure the viewport is updated within the TUI loop
+		m.program.Send(ContentUpdateMsg(content))
+	} else {
+		// If program is not set yet, just update the field directly.
+		// This might happen if SetContent is called before p.Run()
+		m.viewport.SetContent(content)
+	}
 }
 
 // StartProcessing starts the processing state
@@ -324,7 +369,9 @@ func (m *Model) StopProcessing() {
 // SetError sets an error state
 func (m *Model) SetError(err error) {
 	m.err = err
-	m.header.status = "Error"
+	if m.program != nil {
+		m.program.Send(ErrorMsg(err))
+	}
 }
 
 // SetProgress updates the progress state (overall file progress)
@@ -345,3 +392,8 @@ func (m *Model) SetProgress(current, total int, currentFile string) {
 
 // tickMsg is used for updating elapsed time
 type tickMsg time.Time
+
+// Err returns any error that was set on the model.
+func (m *Model) Err() error {
+	return m.err
+}

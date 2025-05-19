@@ -451,18 +451,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 
-	case ollamaSuccessResponseMsg:
-		m.loading = false
-		botResponseText := msg.response
-		responseTime := msg.duration
-		m.replacePlaceholder(chatMessage{
-			text:         botResponseText,
-			sender:       "AI",
-			timestamp:    time.Now(),
-			ThinkingTime: responseTime,
-			isMarkdown:   true,
-		})
-		m.viewport.GotoBottom()
+		case ollamaSuccessResponseMsg:
+			m.loading = false
+			botResponseText := msg.response
+			responseTime := msg.duration
+			// Check for tool invocation
+			var toolInvoke struct {
+				Tool   string          `json:"tool"`
+				Params json.RawMessage `json:"params"`
+			}
+			trimmed := strings.TrimSpace(botResponseText)
+			if strings.HasPrefix(trimmed, "{") {
+				if err := json.Unmarshal([]byte(botResponseText), &toolInvoke); err == nil && toolInvoke.Tool != "" {
+					if tool, ok := m.toolRegistry.Get(toolInvoke.Tool); ok {
+						result, toolErr := tool.Execute(m.parentCtx, toolInvoke.Params)
+						if toolErr != nil {
+							m.replacePlaceholder(chatMessage{
+								text:      fmt.Sprintf("Error executing tool %s: %v", toolInvoke.Tool, toolErr),
+								sender:    "System",
+								timestamp: time.Now(),
+							})
+						} else {
+							resultJSON, _ := json.MarshalIndent(result, "", "  ")
+							m.replacePlaceholder(chatMessage{
+								text:       fmt.Sprintf("Tool %s result:\n```json\n%s\n```", toolInvoke.Tool, string(resultJSON)),
+								sender:     "System",
+								timestamp:  time.Now(),
+								isMarkdown: true,
+							})
+						}
+					} else {
+						m.replacePlaceholder(chatMessage{
+							text:      fmt.Sprintf("Unknown tool requested: %s", toolInvoke.Tool),
+							sender:    "System",
+							timestamp: time.Now(),
+						})
+					}
+					m.viewport.GotoBottom()
+					return m, nil
+				}
+			}
+			// Regular AI response
+			m.replacePlaceholder(chatMessage{
+				text:         botResponseText,
+				sender:       "AI",
+				timestamp:    time.Now(),
+				ThinkingTime: responseTime,
+				isMarkdown:   true,
+			})
+			m.viewport.GotoBottom()
 
 	case ollamaErrorMsg:
 		m.loading = false
@@ -473,45 +510,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			timestamp: time.Now(),
 		})
 
-	case errMsg:
-		m.err = msg
+   case errMsg:
+       m.err = msg
+
+   case tea.MouseMsg:
+       m.viewport, cmd = m.viewport.Update(msg)
+       cmds = append(cmds, cmd)
 
 	// New: Check if the response is a tool invocation (assuming this was intended from previous structure)
 	// This case might need to be reviewed if it's from an ollamaSuccessResponseMsg.text
-	case json.RawMessage: // This case needs careful placement. Is it a primary msg type or derived from another?
-		var toolInvocation struct {
-			Tool   string          `json:"tool"`
-			Params json.RawMessage `json:"params"`
-		}
-		if err := json.Unmarshal([]byte(msg), &toolInvocation); err == nil && toolInvocation.Tool != "" {
-			if tool, ok := m.toolRegistry.Get(toolInvocation.Tool); ok {
-				result, toolErr := tool.Execute(m.parentCtx, toolInvocation.Params)
-				if toolErr != nil {
-					m.addMessage(chatMessage{
-						text:      fmt.Sprintf("Error executing tool %s: %v", toolInvocation.Tool, toolErr),
-						timestamp: time.Now(),
-						sender:    "System",
-					})
-				} else {
-					resultJSON, _ := json.MarshalIndent(result, "", "  ")
-					m.addMessage(chatMessage{
-						text:       fmt.Sprintf("Tool %s result:\n```json\n%s\n```", toolInvocation.Tool, resultJSON),
-						timestamp:  time.Now(),
-						sender:     "System",
-						isMarkdown: true, // Render result as markdown with code block
-					})
-				}
-			} else {
-				m.addMessage(chatMessage{
-					text:      fmt.Sprintf("Unknown tool requested: %s", toolInvocation.Tool),
-					timestamp: time.Now(),
-					sender:    "System",
-				})
-			}
-		} else {
-			// If json.RawMessage was not a tool invocation, it might be an error or unhandled. Consider logging.
-			// Or, if this type of message is not expected directly, this case might be removed or refined.
-		}
 	}
 
 	// If viewport needs to react to any other messages (e.g., mouse events not directly handled)

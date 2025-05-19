@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/castrovroberto/codex-lite/internal/orchestrator"
 	"github.com/castrovroberto/codex-lite/internal/scanner"
 	"github.com/castrovroberto/codex-lite/internal/tui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 var (
@@ -84,93 +86,120 @@ Available models depend on your Ollama installation.`)
 			log.Info("Codex Lite analyze command starting...")
 			log.Debug("Loaded configuration from context", "ollama_host", appCfg.OllamaHostURL, "default_model", appCfg.DefaultModel)
 
-			ctxWithValues := cmd.Context()
+			// Setup context that can be cancelled by SIGINT or when analysis completes.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer stop() // Important to release resources associated with NotifyContext
 
-			// Initialize and register agents with the orchestrator
-			agentOrchestrator := orchestrator.NewBasicOrchestrator()
-			if err := agentOrchestrator.RegisterAgent(agents.NewExplainAgent()); err != nil {
-				log.Warn("Failed to register Explain agent", "error", err)
-			}
-			if err := agentOrchestrator.RegisterAgent(agents.NewSyntaxAgent()); err != nil {
-				log.Warn("Failed to register Syntax agent", "error", err)
-			}
-			if err := agentOrchestrator.RegisterAgent(agents.NewSmellAgent()); err != nil {
-				log.Warn("Failed to register Smell agent", "error", err)
-			}
-			if err := agentOrchestrator.RegisterAgent(agents.NewSecurityAgent()); err != nil {
-				log.Warn("Failed to register Security agent", "error", err)
-			}
-			if err := agentOrchestrator.RegisterAgent(agents.NewAdvancedAgent(appCfg.WorkspaceRoot)); err != nil {
-				log.Warn("Failed to register Advanced agent", "error", err)
-			}
-
-			var agentsToRun []string
-			if len(agentNames) == 0 {
-				log.Info("No specific agents requested, attempting to run all registered agents.")
-				agentsToRun = agentOrchestrator.AvailableAgentNames()
-			} else {
-				for _, requestedName := range agentNames {
-					if _, err := agentOrchestrator.GetAgent(requestedName); err != nil {
-						log.Warn("Requested agent not found, will be skipped.", "agent_name", requestedName)
-						fmt.Printf("⚠️ Warning: Agent '%s' not found. Skipping.\n", requestedName)
-					} else {
-						agentsToRun = append(agentsToRun, requestedName)
-					}
+			// This function contains the core analysis logic
+			// It will be run in a goroutine if TUI is enabled, or directly if not.
+			analyzeLogicFunc := func(analysisCtx context.Context, tuiProgram *tea.Program, tuiModel *tui.Model) error {
+				// Ensure that if this function finishes (normally or error), it tries to quit the TUI
+				if tuiProgram != nil {
+					defer tuiProgram.Quit()
 				}
-			}
 
-			if len(agentsToRun) == 0 {
-				log.Info("No valid agents selected or available to run. Exiting.")
-				fmt.Println("No valid agents selected or available to run.")
-				return nil
-			}
-
-			log.Info("Selected agents to run", "agents", agentsToRun)
-
-			if len(args) == 0 {
-				log.Error("No file patterns specified.")
-				fmt.Println("Error: No file patterns specified.")
-				cmd.Usage()
-				return errors.New("no file patterns specified")
-			}
-
-			// Initialize scanner with custom options
-			scannerOpts := scanner.DefaultOptions()
-			if maxDepth >= 0 {
-				scannerOpts.MaxDepth = maxDepth
-			}
-			if len(ignoreDirs) > 0 {
-				customIgnoreDirs := make(map[string]bool)
-				for _, dir := range ignoreDirs {
-					customIgnoreDirs[dir] = true
+				agentOrchestrator := orchestrator.NewBasicOrchestrator()
+				if err := agentOrchestrator.RegisterAgent(agents.NewExplainAgent()); err != nil {
+					log.Warn("Failed to register Explain agent", "error", err)
 				}
-				scannerOpts.IgnoreDirs = customIgnoreDirs
-			}
-			if len(extensions) > 0 {
-				customExtensions := make(map[string]bool)
-				for _, ext := range extensions {
-					if !strings.HasPrefix(ext, ".") {
-						ext = "." + ext
-					}
-					customExtensions[ext] = true
+				if err := agentOrchestrator.RegisterAgent(agents.NewSyntaxAgent()); err != nil {
+					log.Warn("Failed to register Syntax agent", "error", err)
 				}
-				scannerOpts.SourceExtensions = customExtensions
-			}
+				if err := agentOrchestrator.RegisterAgent(agents.NewSmellAgent()); err != nil {
+					log.Warn("Failed to register Smell agent", "error", err)
+				}
+				if err := agentOrchestrator.RegisterAgent(agents.NewSecurityAgent()); err != nil {
+					log.Warn("Failed to register Security agent", "error", err)
+				}
+				if err := agentOrchestrator.RegisterAgent(agents.NewAdvancedAgent(appCfg.WorkspaceRoot)); err != nil {
+					log.Warn("Failed to register Advanced agent", "error", err)
+				}
 
-			codeScanner := scanner.NewScanner(scannerOpts)
-			var filesToAnalyze []string
-
-			for _, pattern := range args {
-				if recursive {
-					info, err := os.Stat(pattern)
-					if err == nil && info.IsDir() {
-						results, err := codeScanner.Scan(pattern)
-						if err != nil {
-							log.Error("Error scanning directory", "directory", pattern, "error", err)
-							continue
+				var agentsToRun []string
+				if len(agentNames) == 0 {
+					log.Info("No specific agents requested, attempting to run all registered agents.")
+					agentsToRun = agentOrchestrator.AvailableAgentNames()
+				} else {
+					for _, requestedName := range agentNames {
+						if _, err := agentOrchestrator.GetAgent(requestedName); err != nil {
+							log.Warn("Requested agent not found, will be skipped.", "agent_name", requestedName)
+							fmt.Printf("⚠️ Warning: Agent '%s' not found. Skipping.\n", requestedName)
+						} else {
+							agentsToRun = append(agentsToRun, requestedName)
 						}
-						for _, result := range results {
-							filesToAnalyze = append(filesToAnalyze, result.Path)
+					}
+				}
+
+				if len(agentsToRun) == 0 {
+					log.Info("No valid agents selected or available to run. Exiting.")
+					fmt.Println("No valid agents selected or available to run.")
+					return nil
+				}
+				log.Info("Selected agents to run", "agents", agentsToRun)
+
+				if len(args) == 0 {
+					log.Error("No file patterns specified.")
+					fmt.Println("Error: No file patterns specified.")
+					return errors.New("no file patterns specified")
+				}
+
+				scannerOpts := scanner.DefaultOptions()
+				if maxDepth >= 0 {
+					scannerOpts.MaxDepth = maxDepth
+				}
+				if len(ignoreDirs) > 0 {
+					customIgnoreDirs := make(map[string]bool)
+					for _, dir := range ignoreDirs {
+						customIgnoreDirs[dir] = true
+					}
+					scannerOpts.IgnoreDirs = customIgnoreDirs
+				}
+				if len(extensions) > 0 {
+					customExtensions := make(map[string]bool)
+					for _, ext := range extensions {
+						if !strings.HasPrefix(ext, ".") {
+							ext = "." + ext
+						}
+						customExtensions[ext] = true
+					}
+					scannerOpts.SourceExtensions = customExtensions
+				}
+				codeScanner := scanner.NewScanner(scannerOpts)
+				var filesToAnalyze []string
+				for _, pattern := range args {
+					if recursive {
+						info, err := os.Stat(pattern)
+						if err == nil && info.IsDir() {
+							results, err := codeScanner.Scan(pattern)
+							if err != nil {
+								log.Error("Error scanning directory", "directory", pattern, "error", err)
+								continue
+							}
+							for _, result := range results {
+								filesToAnalyze = append(filesToAnalyze, result.Path)
+							}
+						} else {
+							matches, err := filepath.Glob(pattern)
+							if err != nil {
+								log.Error("Invalid file pattern", "pattern", pattern, "error", err)
+								continue
+							}
+							for _, match := range matches {
+								if info, err := os.Stat(match); err == nil {
+									if info.IsDir() {
+										results, err := codeScanner.Scan(match)
+										if err != nil {
+											log.Error("Error scanning directory", "directory", match, "error", err)
+											continue
+										}
+										for _, result := range results {
+											filesToAnalyze = append(filesToAnalyze, result.Path)
+										}
+									} else if codeScanner.IsSourceFile(match) {
+										filesToAnalyze = append(filesToAnalyze, match)
+									}
+								}
+							}
 						}
 					} else {
 						matches, err := filepath.Glob(pattern)
@@ -179,168 +208,123 @@ Available models depend on your Ollama installation.`)
 							continue
 						}
 						for _, match := range matches {
-							if info, err := os.Stat(match); err == nil {
-								if info.IsDir() {
-									results, err := codeScanner.Scan(match)
-									if err != nil {
-										log.Error("Error scanning directory", "directory", match, "error", err)
-										continue
-									}
-									for _, result := range results {
-										filesToAnalyze = append(filesToAnalyze, result.Path)
-									}
-								} else if codeScanner.IsSourceFile(match) {
-									filesToAnalyze = append(filesToAnalyze, match)
-								}
+							if info, err := os.Stat(match); err == nil && !info.IsDir() && codeScanner.IsSourceFile(match) {
+								filesToAnalyze = append(filesToAnalyze, match)
 							}
 						}
 					}
-				} else {
-					matches, err := filepath.Glob(pattern)
+				}
+				if len(filesToAnalyze) == 0 {
+					log.Info("No files found matching the pattern(s) or specified paths after filtering. Exiting.")
+					fmt.Println("No files found to analyze.")
+					return nil
+				}
+				seen := make(map[string]bool)
+				uniqueFiles := []string{}
+				for _, file := range filesToAnalyze {
+					absPath, err := filepath.Abs(file)
 					if err != nil {
-						log.Error("Invalid file pattern", "pattern", pattern, "error", err)
-						continue
+						log.Warn("Could not get absolute path for file, using as is", "file", file, "error", err)
+						absPath = file
 					}
-					for _, match := range matches {
-						if info, err := os.Stat(match); err == nil && !info.IsDir() && codeScanner.IsSourceFile(match) {
-							filesToAnalyze = append(filesToAnalyze, match)
+					if !seen[absPath] {
+						seen[absPath] = true
+						uniqueFiles = append(uniqueFiles, absPath)
+					}
+				}
+				filesToAnalyze = uniqueFiles
+				log.Info("Files to analyze", "count", len(filesToAnalyze))
+
+				if tuiModel != nil {
+					tuiModel.StartProcessing() // Signal TUI that processing is starting
+				}
+
+				g, groupCtx := errgroup.WithContext(analysisCtx)
+				if appCfg.MaxAgentConcurrency > 0 {
+					g.SetLimit(appCfg.MaxAgentConcurrency)
+				}
+
+				fileResultsChan := make(chan string, len(filesToAnalyze))
+
+				for i, filePath_ := range filesToAnalyze {
+					filePath := filePath_ // Capture range variable
+					fileNum := i + 1
+					g.Go(func() error {
+						// Check for context cancellation at the beginning of each file processing task
+						select {
+						case <-groupCtx.Done():
+							log.Info("File analysis cancelled", "file", filePath, "reason", groupCtx.Err())
+							return groupCtx.Err()
+						default:
 						}
-					}
-				}
-			}
 
-			if len(filesToAnalyze) == 0 {
-				log.Info("No files found matching the pattern(s) or specified paths after filtering. Exiting.")
-				fmt.Println("No files found to analyze.")
-				return nil
-			}
+						gLog := contextkeys.LoggerFromContext(groupCtx)
+						if gLog == nil {
+							gLog = log
+							gLog.Warn("Logger not found in goroutine context, using main logger.", "file", filePath)
+						}
+						gLog.Info("Starting analysis for file", "file", filePath)
+						fileContentBytes, err := os.ReadFile(filePath)
+						if err != nil {
+							msg := fmt.Sprintf("❌ Failed to read file %s: %v\n", filePath, err)
+							fileResultsChan <- msg
+							gLog.Error("Failed to read file", "file", filePath, "error", err)
+							return nil
+						}
 
-			// Deduplicate files using absolute paths
-			seen := make(map[string]bool)
-			uniqueFiles := []string{}
-			for _, file := range filesToAnalyze {
-				absPath, err := filepath.Abs(file)
-				if err != nil {
-					log.Warn("Could not get absolute path for file, using as is", "file", file, "error", err)
-					absPath = file
-				}
-				if !seen[absPath] {
-					seen[absPath] = true
-					uniqueFiles = append(uniqueFiles, absPath)
-				}
-			}
-			filesToAnalyze = uniqueFiles
-
-			log.Info("Files to analyze", "count", len(filesToAnalyze))
-
-			// Initialize TUI if enabled
-			var tuiModel tui.Model
-			if !noTui {
-				tuiModel = tui.NewModel("Ollama", appCfg.DefaultModel, time.Now().Format("20060102150405"))
-				tuiModel.StartProcessing()
-			}
-
-			// Create error group for concurrent analysis
-			g, analysisCtx := errgroup.WithContext(ctxWithValues)
-			if appCfg.MaxAgentConcurrency > 0 {
-				g.SetLimit(appCfg.MaxAgentConcurrency)
-			}
-
-			// Channel for collecting analysis results (file-level summaries)
-			fileResultsChan := make(chan string, len(filesToAnalyze))
-
-			for i, filePath := range filesToAnalyze {
-				filePath := filePath // Capture range variable
-				fileNum := i + 1
-				g.Go(func() error {
-					gLog := contextkeys.LoggerFromContext(analysisCtx)
-					if gLog == nil {
-						gLog = log // Fallback to main logger
-						gLog.Warn("Logger not found in goroutine context, using main logger.", "file", filePath)
-					}
-					gLog.Info("Starting analysis for file", "file", filePath)
-
-					fileContentBytes, err := os.ReadFile(filePath)
-					if err != nil {
-						msg := fmt.Sprintf("❌ Failed to read file %s: %v\n", filePath, err)
-						fileResultsChan <- msg
-						gLog.Error("Failed to read file", "file", filePath, "error", err)
-						return nil // Continue with other files
-					}
-
-					// Update TUI progress for file scanning
-					if !noTui {
-						tuiModel.SetProgress(fileNum, len(filesToAnalyze), filepath.Base(filePath))
-					} else {
-						// This initial message will be followed by per-agent progress
-						fmt.Printf("Analyzing %s (%d/%d)...\n", filePath, fileNum, len(filesToAnalyze))
-					}
-
-					// Channel for per-agent progress updates for this file
-					agentProgressChan := make(chan orchestrator.AgentProgressUpdate)
-
-					// Goroutine to handle progress updates for the current file
-					var progressWg sync.WaitGroup
-					progressWg.Add(1)
-					go func() {
-						defer progressWg.Done()
-						for update := range agentProgressChan {
-							if noTui {
-								// Plain text output for CLI progress
-								progressMsg := fmt.Sprintf("  [%s] Agent: %s (%d/%d) - %s",
-									filepath.Base(update.FilePath), update.AgentName, update.AgentIndex+1, update.TotalAgents, update.Status)
-								if update.Status == orchestrator.StatusCompleted || update.Status == orchestrator.StatusFailed || update.Status == orchestrator.StatusTimedOut {
-									progressMsg += fmt.Sprintf(" (%.2fs)", update.Duration.Seconds())
-								}
-								if update.Error != nil {
-									// Avoid printing full error details here to keep CLI output concise,
-									// the main result block will show the full error.
-									// But indicate an error occurred.
-									if update.Status == orchestrator.StatusTimedOut {
-										progressMsg += " - Timed out"
-									} else {
-										progressMsg += " - Error"
+						if tuiModel != nil {
+							tuiModel.SetProgress(fileNum, len(filesToAnalyze), filepath.Base(filePath))
+						} else {
+							fmt.Printf("Analyzing %s (%d/%d)...\n", filePath, fileNum, len(filesToAnalyze))
+						}
+						agentProgressChan := make(chan orchestrator.AgentProgressUpdate, 10) // Buffer to be safe
+						var progressWg sync.WaitGroup
+						progressWg.Add(1)
+						go func() {
+							defer progressWg.Done()
+							for update := range agentProgressChan {
+								if tuiModel != nil {
+									tuiModel.ProcessAgentUpdate(update)
+								} else {
+									progressMsg := fmt.Sprintf("  [%s] Agent: %s (%d/%d) - %s",
+										filepath.Base(update.FilePath), update.AgentName, update.AgentIndex+1, update.TotalAgents, update.Status)
+									if update.Status == orchestrator.StatusCompleted || update.Status == orchestrator.StatusFailed || update.Status == orchestrator.StatusTimedOut {
+										progressMsg += fmt.Sprintf(" (%.2fs)", update.Duration.Seconds())
 									}
+									if update.Error != nil {
+										if update.Status == orchestrator.StatusTimedOut {
+											progressMsg += " - Timed out"
+										} else {
+											progressMsg += " - Error"
+										}
+									}
+									fmt.Println(progressMsg)
 								}
-								fmt.Println(progressMsg)
-							} else {
-								// For TUI mode, send the update to the TUI model.
-								// The tuiModel is a value type, but ProcessAgentUpdate internally uses
-								// the *tea.Program instance set on it via SetProgram.
-								tuiModel.ProcessAgentUpdate(update)
+							}
+						}()
+
+						results, orchErr := agentOrchestrator.RunAgents(groupCtx, agentsToRun, filePath, string(fileContentBytes), agentProgressChan)
+						progressWg.Wait()
+
+						if orchErr != nil {
+							msg := fmt.Sprintf("⚠️ Orchestrator error for %s: %v\n", filePath, orchErr)
+							fileResultsChan <- msg
+							gLog.Error("Orchestrator encountered an error for file", "file", filePath, "error", orchErr)
+							if errors.Is(orchErr, context.Canceled) || errors.Is(orchErr, context.DeadlineExceeded) {
+								return orchErr
 							}
 						}
-					}()
-
-					results, orchErr := agentOrchestrator.RunAgents(analysisCtx, agentsToRun, filePath, string(fileContentBytes), agentProgressChan)
-
-					progressWg.Wait() // Wait for the progress handling goroutine to finish (channel closed)
-
-					if orchErr != nil {
-						// Orchestrator level error (e.g., context cancellation affecting the orchestrator itself)
-						// This is distinct from individual agent errors which are in `results[j].Error`
-						msg := fmt.Sprintf("⚠️ Orchestrator error for %s: %v\n", filePath, orchErr)
-						fileResultsChan <- msg
-						gLog.Error("Orchestrator encountered an error for file", "file", filePath, "error", orchErr)
-						// If the orchestrator itself is cancelled, we should propagate this error up
-						// to stop the errgroup for other files if it's a critical cancellation.
-						if errors.Is(orchErr, context.Canceled) || errors.Is(orchErr, context.DeadlineExceeded) {
-							return orchErr // Propagate to errgroup
-						}
-						// For other orchestrator errors, we might allow continuing with other files.
-					}
-
-					var output strings.Builder
-					output.WriteString(fmt.Sprintf("Results for %s:\n", filePath))
-					for _, result := range results {
-						if result.Error != nil {
-							var agentErr *agents.AgentError
-							if errors.As(result.Error, &agentErr) {
-								msg := fmt.Sprintf("⚠️ Error with %s (%s): %v\n", agentErr.AgentName, agentErr.Message, agentErr.Unwrap())
-								output.WriteString(msg)
-								gLog.Error("Agent execution failed", "agent_name", agentErr.AgentName, "file", result.File, "agent_message", agentErr.Message, "underlying_error", agentErr.Unwrap())
-							} else if errors.Is(result.Error, ollama.ErrOllamaHostUnreachable) {
-								msg := fmt.Sprintf(`⚠️ Error with %s: Could not connect to Ollama.
+						var output strings.Builder
+						output.WriteString(fmt.Sprintf("Results for %s:\n", filePath))
+						for _, result := range results {
+							if result.Error != nil {
+								var agentErr *agents.AgentError
+								if errors.As(result.Error, &agentErr) {
+									msg := fmt.Sprintf("⚠️ Error with %s (%s): %v\n", agentErr.AgentName, agentErr.Message, agentErr.Unwrap())
+									output.WriteString(msg)
+									gLog.Error("Agent execution failed", "agent_name", agentErr.AgentName, "file", result.File, "agent_message", agentErr.Message, "underlying_error", agentErr.Unwrap())
+								} else if errors.Is(result.Error, ollama.ErrOllamaHostUnreachable) {
+									msg := fmt.Sprintf(`⚠️ Error with %s: Could not connect to Ollama.
 
 Please check:
 1. Is Ollama running? Start it with:
@@ -353,15 +337,15 @@ Please check:
    Try: curl %s/api/tags to test connectivity.
 
 `, result.AgentName, appCfg.OllamaHostURL, appCfg.OllamaHostURL)
-								output.WriteString(msg)
-								gLog.Error("Ollama host unreachable", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
-							} else if errors.Is(result.Error, ollama.ErrOllamaModelNotFound) {
-								modelUsed := appCfg.DefaultModel
-								if modelUsed == "" {
-									gLog.Warn("DefaultModel in AppConfig is empty, which is unexpected.", "file", result.File)
-									modelUsed = "[model_name_unavailable]"
-								}
-								msg := fmt.Sprintf(`⚠️ Error with %s: Model '%s' not found.
+									output.WriteString(msg)
+									gLog.Error("Ollama host unreachable", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
+								} else if errors.Is(result.Error, ollama.ErrOllamaModelNotFound) {
+									modelUsed := appCfg.DefaultModel
+									if modelUsed == "" {
+										gLog.Warn("DefaultModel in AppConfig is empty, which is unexpected.", "file", result.File)
+										modelUsed = "[model_name_unavailable]"
+									}
+									msg := fmt.Sprintf(`⚠️ Error with %s: Model '%s' not found.
 
 To fix this:
 1. List available models:
@@ -374,66 +358,97 @@ To fix this:
    codex-lite analyze --default-model="llama2" [files...]
 
 `, result.AgentName, modelUsed, modelUsed)
-								output.WriteString(msg)
-								gLog.Error("Ollama model not found", "agent_name", result.AgentName, "file", result.File, "error", result.Error, "model_used", modelUsed)
+									output.WriteString(msg)
+									gLog.Error("Ollama model not found", "agent_name", result.AgentName, "file", result.File, "error", result.Error, "model_used", modelUsed)
+								} else {
+									msg := fmt.Sprintf("⚠️ Error with %s: %v\n", result.AgentName, result.Error)
+									output.WriteString(msg)
+									gLog.Error("Generic error during agent analysis", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
+								}
 							} else {
-								msg := fmt.Sprintf("⚠️ Error with %s: %v\n", result.AgentName, result.Error)
-								output.WriteString(msg)
-								gLog.Error("Generic error during agent analysis", "agent_name", result.AgentName, "file", result.File, "error", result.Error)
-							}
-						} else {
-							output.WriteString(fmt.Sprintf("✅ %s analysis:\n", result.AgentName))
-							if result.Output != "" {
-								output.WriteString(fmt.Sprintf("   %s\n", strings.ReplaceAll(result.Output, "\n", "\n   ")))
+								output.WriteString(fmt.Sprintf("✅ %s analysis:\n", result.AgentName))
+								if result.Output != "" {
+									output.WriteString(fmt.Sprintf("   %s\n", strings.ReplaceAll(result.Output, "\n", "\n   ")))
+								}
 							}
 						}
+						output.WriteString("---\n")
+						fileResultsChan <- output.String()
+						return nil
+					})
+				}
+
+				// Goroutine to collect file results and print/update TUI (for non-agent specific results)
+				// This part is for the final string summary of each file.
+				var allFileResultsWg sync.WaitGroup
+				allFileResultsWg.Add(1)
+				go func() {
+					defer allFileResultsWg.Done()
+					var allResults strings.Builder
+					for result := range fileResultsChan { // Drains until closed
+						if tuiModel != nil {
+							allResults.WriteString(result)
+							// Send content update to TUI program. A new message type might be better.
+							// For now, using existing SetContent method, but this is called from a goroutine.
+							// This needs to be a tea.Msg sent via tuiProgram.Send()
+							tuiProgram.Send(tui.ContentUpdateMsg(allResults.String()))
+						} else {
+							fmt.Print(result)
+						}
 					}
-					output.WriteString("---\n")
-					fileResultsChan <- output.String()
-					return nil
-				})
-			}
+				}()
 
-			// Collect results
-			var allResults strings.Builder
-			go func() {
-				for result := range fileResultsChan {
-					if !noTui {
-						allResults.WriteString(result)
-						tuiModel.SetContent(allResults.String())
-					} else {
-						fmt.Print(result)
+				analysisErr := g.Wait()
+				close(fileResultsChan)  // Close after g.Wait() ensures all producers are done
+				allFileResultsWg.Wait() // Wait for the collector to finish processing all file results
+
+				if tuiModel != nil {
+					tuiModel.StopProcessing()
+					if analysisErr != nil && !errors.Is(analysisErr, context.Canceled) && !errors.Is(analysisErr, context.DeadlineExceeded) {
+						// Send error to TUI, it will display it and p.Quit() will be called by defer
+						tuiProgram.Send(tui.ErrorMsg(analysisErr))
 					}
 				}
-			}()
 
-			// Wait for all file analyses (and their progress goroutines) to complete
-			if err := g.Wait(); err != nil {
-				log.Error("Error occurred during concurrent file analysis", "error", err)
-				if !noTui {
-					tuiModel.SetError(fmt.Errorf("analysis group failed: %w", err))
+				if analysisErr != nil {
+					log.Error("Error occurred during concurrent file analysis", "error", analysisErr)
+					if errors.Is(analysisErr, context.Canceled) || errors.Is(analysisErr, context.DeadlineExceeded) {
+						log.Info("Analysis was cancelled or timed out.")
+						return nil // Suppress exit code for user-initiated cancellation / timeout
+					}
+					return fmt.Errorf("analysis group failed: %w", analysisErr)
 				}
-				// Don't return error directly from RunE if it's a context cancellation,
-				// as cobra might print it verbosely. Log it and let main handle exit.
-				// The error is already logged.
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					// Suppress exit code for user-initiated cancellation
-					return nil
+
+				log.Info("All file analyses finished.")
+				if tuiModel == nil { // Only print if not in TUI mode (TUI has its own final view)
+					fmt.Println("\nAll analyses finished.")
 				}
-				return fmt.Errorf("analysis group failed: %w", err) // For other errors
+				return nil
 			}
 
-			// Ensure results channel is closed before TUI attempts to stop.
-			close(fileResultsChan)
+			if noTui {
+				// Run analysis logic directly in the main goroutine, using the main ctx
+				return analyzeLogicFunc(ctx, nil, nil)
+			} else {
+				// TUI mode: Initialize TUI and run analysis logic in a separate goroutine
+				tm := tui.NewModel("Ollama", appCfg.DefaultModel, time.Now().Format("20060102150405"))
+				p := tea.NewProgram(&tm, tea.WithAltScreen(), tea.WithMouseCellMotion())
+				tm.SetProgram(p)
 
-			if !noTui {
-				tuiModel.StopProcessing()
-				return tui.RunWithModel(&tuiModel)
+				go analyzeLogicFunc(ctx, p, &tm) // Pass TUI program and model to the logic func
+
+				// This will block until p.Quit() is called (either by analyzeLogicFunc or SIGINT)
+				if _, err := p.Run(); err != nil {
+					log.Error("TUI exited with error", "error", err)
+					return err
+				}
+				// Check for an error stored on the model if p.Run() returns nil (e.g. from tea.Quit)
+				if tm.Err() != nil { // Assuming an Err() getter on tui.Model
+					log.Error("TUI model has an error after run", "error", tm.Err())
+					return tm.Err()
+				}
+				return nil
 			}
-
-			log.Info("All file analyses finished.")
-			fmt.Println("\nAll analyses finished.")
-			return nil
 		},
 	}
 )

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -20,18 +19,15 @@ func Run(provider, model, sessionID string) error {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error running TUI program: %w", err)
 	}
 
-	// Type assert to our model and check if there was an error
-	if fm, ok := finalModel.(Model); ok {
-		if fm.err != nil {
-			return fm.err
+	if fm, ok := finalModel.(*Model); ok {
+		if fm.Err() != nil {
+			return fm.Err()
 		}
-	} else if fmp, ok := finalModel.(*Model); ok {
-		if fmp.err != nil {
-			return fmp.err
-		}
+	} else {
+		return fmt.Errorf("unexpected model type returned from TUI: %T", finalModel)
 	}
 
 	return nil
@@ -49,18 +45,15 @@ func RunWithModel(m *Model) error {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error running TUI program: %w", err)
 	}
 
-	// Type assert to our model and check if there was an error
-	if fm, ok := finalModel.(Model); ok {
-		if fm.err != nil {
-			return fm.err
+	if fm, ok := finalModel.(*Model); ok {
+		if fm.Err() != nil {
+			return fm.Err()
 		}
-	} else if fmp, ok := finalModel.(*Model); ok {
-		if fmp.err != nil {
-			return fmp.err
-		}
+	} else {
+		return fmt.Errorf("unexpected model type returned from TUI: %T", finalModel)
 	}
 
 	return nil

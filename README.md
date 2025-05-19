@@ -3,6 +3,8 @@
 <!-- Optional: Add a logo or a relevant image here -->
 <!-- <img src="path/to/your/logo.png" alt="Codex Lite Logo" width="150" style="float: right;"> -->
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/castrovroberto/codex-lite)
+
 **Codex Lite: Your AI-powered coding assistant.** It's a command-line tool that leverages local LLMs (via Ollama) to provide code explanation, analysis, and interactive chat capabilities. Built with Go, Cobra, and Bubble Tea for a rich TUI experience.
 
 ---
@@ -333,7 +335,6 @@ Please ensure your code adheres to Go best practices and that tests pass. Adding
 ## **8️⃣ License**
 
 Distributed under the **MIT License**. See `LICENSE` for more information.
-*(You currently have an empty `LICENSE` file. Please choose and add a license, e.g., MIT, Apache 2.0.)*
 
 ---
 

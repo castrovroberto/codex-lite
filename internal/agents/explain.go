@@ -1,69 +1,124 @@
-// internal/agents/explain_agent.go
 package agents
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"strings"       // For strings.TrimSpace
 	"text/template"
 
-	"github.com/castrovroberto/codex-lite/internal/config"
+	"github.com/castrovroberto/codex-lite/internal/contextkeys"
 	"github.com/castrovroberto/codex-lite/internal/ollama"
 )
 
+// ExplainAgent provides explanations for code snippets.
 type ExplainAgent struct{}
 
+// NewExplainAgent creates a new ExplainAgent.
+func NewExplainAgent() Agent { // Return the interface type
+	return &ExplainAgent{}
+}
+
+// Name returns the name of the agent.
 func (a *ExplainAgent) Name() string {
-	return "ExplainAgent"
+	return "Explainer"
 }
 
-const explainPromptTemplate = `You are a code explanation assistant.
-Explain the purpose, functionality, and key components of the following {{.FileExtension}} code.
-If there are any complex parts, try to simplify them.
-Format your entire output as Markdown.
-
-Code to analyze (file type: {{.FileExtension}}):
-` + "```{{.FileExtension}}\n{{.Code}}\n```"
-
-type ExplainPromptData struct {
-	FileExtension string
-	Code          string
+// Description returns a brief description of the agent.
+func (a *ExplainAgent) Description() string {
+	return "Explains what a piece of code does in plain language."
 }
 
-func (a *ExplainAgent) Analyze(ctx context.Context, modelName string, path string, code string) (Result, error) {
-	appCfg := config.FromContext(ctx)
+const explainPromptTemplate = `
+Explain the following {{ .Language }} code snippet. Focus on its main purpose, inputs, outputs, and key logic.
+Keep the explanation concise and clear.
+Format your response as a JSON object with an "explanation" key.
+Example:
+{
+  "explanation": "This code defines a function that calculates the factorial of a number using recursion."
+}
+
+Code:
+{{ .Code }}
+`
+
+type explainTemplateData struct {
+	Language string
+	Code     string
+}
+
+// ExplanationResponse defines the expected JSON structure from Ollama.
+type ExplanationResponse struct {
+	Explanation string `json:"explanation"`
+}
+
+// Analyze performs the code explanation.
+func (a *ExplainAgent) Analyze(ctx context.Context, modelName, filePath, fileContent string) (Result, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+	appCfg := contextkeys.ConfigFromContext(ctx)
+	lang := getFileExtension(filePath)
+
+	log.Debug("Running ExplainAgent", "file", filePath, "model", modelName)
+
+	// Check for context cancellation early
+	select {
+	case <-ctx.Done():
+		log.Info("ExplainAgent analysis cancelled", "file", filePath)
+		return Result{AgentName: a.Name(), File: filePath}, ctx.Err()
+	default:
+		// Continue
+	}
+
+	data := explainTemplateData{
+		Language: lang,
+		Code:     fileContent,
+	}
 
 	tmpl, err := template.New("explainPrompt").Parse(explainPromptTemplate)
 	if err != nil {
-		return Result{}, fmt.Errorf("ExplainAgent: failed to parse prompt template: %w", err)
-	}
-
-	fileExt := getFileExtension(path) // Uses the function from utils.go
-	if fileExt == "" {
-		fileExt = "text" // Fallback
-	}
-
-	data := ExplainPromptData{
-		FileExtension: fileExt,
-		Code:          code,
+		log.Error("Failed to parse explain prompt template", "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{ // Use the AgentError from agents package
+			AgentName: a.Name(),
+			Message:   "failed to parse explain prompt template",
+			Err:       err,
+		}
 	}
 
 	var promptBuf bytes.Buffer
 	if err := tmpl.Execute(&promptBuf, data); err != nil {
-		return Result{}, fmt.Errorf("ExplainAgent: failed to execute prompt template: %w", err)
+		log.Error("Failed to execute explain prompt template", "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{ // Use the AgentError from agents package
+			AgentName: a.Name(),
+			Message:   "failed to execute explain prompt template",
+			Err:       err,
+		}
 	}
 
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, appCfg.OllamaRequestTimeout)
-	defer cancel() // Ensure resources are released even if the function returns early.
-	response, err := ollama.Query(ctxWithTimeout, appCfg.OllamaHostURL, modelName, promptBuf.String())
+	response, err := ollama.Query(ctx, appCfg.OllamaHostURL, modelName, promptBuf.String())
 	if err != nil {
-		return Result{}, fmt.Errorf("ExplainAgent: error from Ollama: %w", err)
+		log.Error("Ollama query failed for ExplainAgent", "file", filePath, "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{ // Use the AgentError from agents package
+			AgentName: a.Name(),
+			Message:   "Ollama query failed during code explanation",
+			Err:       err,
+		}
 	}
 
-	return Result{
-		File:   path,
-		Output: strings.TrimSpace(response),
-		Agent:  a.Name(),
+	log.Debug("Received Ollama response for ExplainAgent", "file", filePath, "response_length", len(response))
+	var explanationResp ExplanationResponse
+	if err := json.Unmarshal([]byte(response), &explanationResp); err != nil {
+		log.Error("Failed to parse JSON response from Ollama for explanation", "response_snippet", response[:min(len(response), 200)], "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{ // Use the AgentError from agents package
+			AgentName: a.Name(),
+			Message:   "failed to parse JSON response from Ollama for explanation",
+			Err:       fmt.Errorf("unmarshal error: %w, raw response: %s", err, response[:min(len(response), 500)]),
+		}
+	}
+
+	log.Debug("ExplainAgent analysis complete", "file", filePath)
+	return Result{ // Use the Result from agents package
+		AgentName: a.Name(),
+		File:      filePath,
+		Output:    explanationResp.Explanation,
 	}, nil
 }

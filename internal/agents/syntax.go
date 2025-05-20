@@ -1,69 +1,135 @@
-// internal/agents/syntax_agent.go
 package agents
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	// "path/filepath" // No longer needed here if getFileExtension is in utils.go
-	"strings"       // No longer needed here if getFileExtension is in utils.go
 	"text/template"
 
-	"github.com/castrovroberto/codex-lite/internal/config"
+	// "github.com/castrovroberto/codex-lite/internal/config" // No longer needed directly
+	"github.com/castrovroberto/codex-lite/internal/contextkeys"
 	"github.com/castrovroberto/codex-lite/internal/ollama"
+	// "github.com/castrovroberto/codex-lite/internal/logger" // No longer needed directly
 )
 
+// SyntaxAgent focuses on identifying syntax errors or potential issues.
 type SyntaxAgent struct{}
 
+func NewSyntaxAgent() *SyntaxAgent {
+	return &SyntaxAgent{}
+}
+
 func (a *SyntaxAgent) Name() string {
-	return "SyntaxAgent"
+	return "Syntax Checker"
 }
 
-const syntaxPromptTemplate = `You are a syntax checking assistant.
-Analyze the following {{.FileExtension}} code for syntax errors, potential issues, or suspicious lines.
-Be precise and clearly indicate the line number for each issue you find.
-If there are no errors, confirm that the syntax appears correct.
-Format your entire output as Markdown.
-
-Code to analyze (file type: {{.FileExtension}}):
-` + "```{{.FileExtension}}\n{{.Code}}\n```"
-
-type SyntaxPromptData struct {
-	FileExtension string
-	Code          string
+func (a *SyntaxAgent) Description() string {
+	return "Identifies potential syntax errors and provides corrections or suggestions."
 }
 
-func (a *SyntaxAgent) Analyze(ctx context.Context, modelName string, path string, code string) (Result, error) {
-	appCfg := config.FromContext(ctx)
+const syntaxPromptTemplate = `
+Analyze the following {{ .Language }} code snippet for syntax errors and potential issues.
+If you find any, provide a brief explanation of the error and a corrected version if possible.
+If no errors are found, state "No syntax issues found."
+Format your response as a JSON object with a "syntax_analysis" key containing your findings.
+Example for an error:
+{
+  "syntax_analysis": "Error: Missing semicolon at line 5. Corrected: ... (corrected code) ..."
+}
+Example for no errors:
+{
+  "syntax_analysis": "No syntax issues found."
+}
+
+Code:
+{{ .Code }}
+`
+
+type syntaxTemplateData struct {
+	Language string
+	Code     string
+}
+
+// SyntaxAnalysisResponse defines the expected JSON structure from Ollama for syntax analysis.
+type SyntaxAnalysisResponse struct {
+	Analysis string `json:"syntax_analysis"`
+}
+
+func (a *SyntaxAgent) Analyze(ctx context.Context, modelName, filePath, fileContent string) (Result, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+	appCfg := contextkeys.ConfigFromContext(ctx)
+	lang := getFileExtension(filePath) // This line calls the function from utils.go
+
+	log.Debug("Running SyntaxAgent", "file", filePath, "model", modelName)
+
+	// Check for context cancellation early
+	select {
+	case <-ctx.Done():
+		log.Info("SyntaxAgent analysis cancelled", "file", filePath)
+		return Result{AgentName: a.Name(), File: filePath}, ctx.Err()
+	default:
+		// Continue
+	}
+
+	data := syntaxTemplateData{
+		Language: lang,
+		Code:     fileContent,
+	}
 
 	tmpl, err := template.New("syntaxPrompt").Parse(syntaxPromptTemplate)
 	if err != nil {
-		return Result{}, fmt.Errorf("SyntaxAgent: failed to parse syntax prompt template: %w", err)
-	}
-
-	fileExt := getFileExtension(path) // Uses the function from utils.go
-	if fileExt == "" {                 // Or whatever default you set in getFileExtension
-		fileExt = "text" // Fallback if getFileExtension could return empty
-	}
-
-	data := SyntaxPromptData{
-		FileExtension: fileExt,
-		Code:          code,
+		log.Error("Failed to parse syntax prompt template", "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{
+			AgentName: a.Name(),
+			Message:   "failed to parse syntax prompt template",
+			Err:       err,
+		}
 	}
 
 	var promptBuf bytes.Buffer
 	if err := tmpl.Execute(&promptBuf, data); err != nil {
-		return Result{}, fmt.Errorf("SyntaxAgent: failed to execute syntax prompt template: %w", err)
+		log.Error("Failed to execute syntax prompt template", "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{
+			AgentName: a.Name(),
+			Message:   "failed to execute syntax prompt template",
+			Err:       err,
+		}
 	}
 
-	response, err := ollama.Query(appCfg.OllamaHostURL, modelName, promptBuf.String())
+	response, err := ollama.Query(ctx, appCfg.OllamaHostURL, modelName, promptBuf.String())
 	if err != nil {
-		return Result{}, fmt.Errorf("SyntaxAgent: error from Ollama: %w", err)
+		log.Error("Ollama query failed for SyntaxAgent", "file", filePath, "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{
+			AgentName: a.Name(),
+			Message:   "Ollama query failed during syntax analysis",
+			Err:       err,
+		}
 	}
 
+	log.Debug("Received Ollama response for SyntaxAgent", "file", filePath, "response_length", len(response))
+	var syntaxResp SyntaxAnalysisResponse
+	if err := json.Unmarshal([]byte(response), &syntaxResp); err != nil {
+		log.Error("Failed to parse JSON response from Ollama for syntax analysis", "response_snippet", response[:min(len(response), 200)], "error", err)
+		return Result{AgentName: a.Name(), File: filePath}, &AgentError{
+			AgentName: a.Name(),
+			Message:   "failed to parse JSON response from Ollama for syntax analysis",
+			Err:       fmt.Errorf("unmarshal error: %w, raw response: %s", err, response[:min(len(response), 500)]),
+		}
+	}
+
+	log.Debug("SyntaxAgent analysis complete", "file", filePath)
 	return Result{
-		File:   path,
-		Output: strings.TrimSpace(response),
-		Agent:  a.Name(),
+		AgentName: a.Name(),
+		File:      filePath,
+		Output:    syntaxResp.Analysis,
 	}, nil
 }
+
+// min helper function (can be in a utils package if used more broadly)
+// func min(a, b int) int {
+// 	if a < b {
+// 		return a
+// 	}
+// 	return b
+// }

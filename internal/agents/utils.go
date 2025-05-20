@@ -39,3 +39,13 @@ func getFileExtension(path string) string {
 	// Should have been caught by the first if, but as a fallback.
 	return strings.ToLower(strings.TrimPrefix(ext, "."))
 }
+
+// I've added a local min function to each agent file for simplicity.
+// If you have a shared utils package where getFileExtension lives,
+// you could add min there too.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

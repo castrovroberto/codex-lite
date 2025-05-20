@@ -21,7 +21,8 @@ type AppConfig struct {
 	OllamaRequestTimeout          time.Duration `mapstructure:"ollama_request_timeout"`
 	OllamaKeepAlive               string        `mapstructure:"ollama_keep_alive"`
 	ChatSystemPromptFile          string        `mapstructure:"chat_system_prompt_file"` // New: Path to the system prompt file for chat
-	MaxConcurrentAnalyzers        int           `mapstructure:"max_concurrent_analyzers"`
+	MaxAgentConcurrency           int           `mapstructure:"max_agent_concurrency"`
+	AgentTimeout                  time.Duration `mapstructure:"agent_timeout"` // New: Timeout for individual agent execution
 	WorkspaceRoot                 string        `mapstructure:"workspace_root"`
 	loadedChatSystemPromptContent string        // Unexported field to store the loaded content
 
@@ -47,6 +48,31 @@ var (
 	once sync.Once
 )
 
+const defaultInternalSystemPrompt = "You are a helpful AI assistant."
+
+// resolvePath tries to resolve a path. If configFilePath is provided and path is relative,
+// it attempts to resolve relative to the config file's directory.
+// Otherwise, it tries to make it absolute based on the current working directory.
+func resolvePath(path string, configFilePath string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	if configFilePath != "" {
+		configDir := filepath.Dir(configFilePath)
+		absPath := filepath.Join(configDir, path)
+		if _, err := os.Stat(absPath); err == nil {
+			return absPath, nil
+		}
+		// If not found relative to config, fall through to try CWD or return error if strict
+	}
+	// Default to trying to make it absolute from CWD
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to make path absolute: %w", err)
+	}
+	return absPath, nil
+}
+
 // LoadConfig loads configuration from file, environment variables, and defaults.
 // It ensures this happens only once.
 func LoadConfig(cfgFile string) error {
@@ -59,6 +85,8 @@ func LoadConfig(cfgFile string) error {
 		viper.SetDefault("ollama_request_timeout", "120s")            // Default timeout for Ollama requests
 		viper.SetDefault("ollama_keep_alive", "5m")                   // Default keep_alive for Ollama models
 		viper.SetDefault("chat_system_prompt_file", "")               // Default to empty, meaning no external file unless specified
+		viper.SetDefault("max_agent_concurrency", 1)                  // Default to 1 for sequential execution as per backlog task for new orchestrator logic
+		viper.SetDefault("agent_timeout", "30s")                      // Default per-agent timeout
 		viper.SetDefault("workspace_root", ".")                       // Default to current directory
 
 		if cfgFile != "" {
@@ -90,6 +118,8 @@ func LoadConfig(cfgFile string) error {
 		_ = viper.BindEnv("ollama_request_timeout", "CODEXLITE_OLLAMA_REQUEST_TIMEOUT")
 		_ = viper.BindEnv("ollama_keep_alive", "CODEXLITE_OLLAMA_KEEP_ALIVE")
 		_ = viper.BindEnv("chat_system_prompt_file", "CODEXLITE_CHAT_SYSTEM_PROMPT_FILE") // Env var for the file path
+		_ = viper.BindEnv("max_agent_concurrency", "CODEXLITE_MAX_AGENT_CONCURRENCY")     // Bind new env var
+		_ = viper.BindEnv("agent_timeout", "CODEXLITE_AGENT_TIMEOUT")                     // Bind new env var
 
 		// Attempt to read the configuration file.
 		if err := viper.ReadInConfig(); err != nil {
@@ -119,45 +149,39 @@ func LoadConfig(cfgFile string) error {
 
 		// Load chat system prompt from file if specified
 		if Cfg.ChatSystemPromptFile != "" {
-			// Attempt to make path absolute if not already, or resolve relative to config/workspace
-			promptFilePath := Cfg.ChatSystemPromptFile
-			if !filepath.IsAbs(promptFilePath) {
-				// Prefer relative to workspace root if Cfg.WorkspaceRoot is set and valid,
-				// otherwise try relative to current dir (where codex-lite is run or config found).
-				// For simplicity here, let's assume it can be relative to current working dir or an absolute path.
-				// A more robust solution might check relative to config file location or workspace_root.
-			}
-			content, err := os.ReadFile(promptFilePath)
+			// Resolve the path relative to the config file or absolute
+			absPath, err := resolvePath(Cfg.ChatSystemPromptFile, viper.ConfigFileUsed())
 			if err != nil {
-				log.Printf("Warning: Failed to read chat system prompt file specified at '%s': %v. Using no specific system prompt.", promptFilePath, err)
-				Cfg.loadedChatSystemPromptContent = "" // Ensure it's empty on error
+				log.Printf("Warning: could not determine absolute path for chat_system_prompt_file: %v", err)
+				// Potentially use Cfg.ChatSystemPromptFile as is, or handle error
+				Cfg.loadedChatSystemPromptContent = defaultInternalSystemPrompt
 			} else {
-				Cfg.loadedChatSystemPromptContent = strings.TrimSpace(string(content))
-				if Cfg.loadedChatSystemPromptContent == "" {
-					log.Printf("Warning: Chat system prompt file '%s' was empty.", promptFilePath)
+				content, err := os.ReadFile(absPath)
+				if err != nil {
+					log.Printf("Warning: could not read chat_system_prompt_file '%s': %v. Using default prompt.", absPath, err)
+					Cfg.loadedChatSystemPromptContent = defaultInternalSystemPrompt // Use default
+				} else {
+					Cfg.loadedChatSystemPromptContent = string(content)
+					log.Printf("Loaded chat system prompt from: %s", absPath)
 				}
 			}
 		} else {
-			// If no file is specified, use a default built-in prompt or leave it empty
-			// For now, let's use the previous default if no file is specified.
-			Cfg.loadedChatSystemPromptContent = "You are a helpful and concise AI assistant."
+			Cfg.loadedChatSystemPromptContent = defaultInternalSystemPrompt // Use default if not specified
+			log.Printf("chat_system_prompt_file not specified, using default internal system prompt.")
 		}
 
-		// Validate configuration values
-		if Cfg.OllamaRequestTimeout < time.Second {
-			log.Printf("Warning: ollama_request_timeout is too low (%v), setting to default (120s)", Cfg.OllamaRequestTimeout)
-			Cfg.OllamaRequestTimeout = 120 * time.Second
-		} else if Cfg.OllamaRequestTimeout > 10*time.Minute {
-			log.Printf("Warning: ollama_request_timeout is too high (%v), setting to maximum (10m)", Cfg.OllamaRequestTimeout)
-			Cfg.OllamaRequestTimeout = 10 * time.Minute
+		// Validate AgentTimeout
+		if Cfg.AgentTimeout <= 0 {
+			log.Printf("Warning: agent_timeout must be positive, setting to default (30s)")
+			Cfg.AgentTimeout = 30 * time.Second
 		}
 
-		if Cfg.MaxConcurrentAnalyzers < 1 {
-			log.Printf("Warning: max_concurrent_analyzers must be at least 1, setting to default (5)")
-			Cfg.MaxConcurrentAnalyzers = 5
-		} else if Cfg.MaxConcurrentAnalyzers > 20 {
-			log.Printf("Warning: max_concurrent_analyzers is too high (%d), setting to maximum (20)", Cfg.MaxConcurrentAnalyzers)
-			Cfg.MaxConcurrentAnalyzers = 20
+		if Cfg.MaxAgentConcurrency < 1 {
+			log.Printf("Warning: max_agent_concurrency must be at least 1, setting to 1 (sequential)")
+			Cfg.MaxAgentConcurrency = 1
+		} else if Cfg.MaxAgentConcurrency > 20 { // Arbitrary upper limit, can be adjusted
+			log.Printf("Warning: max_agent_concurrency is too high (%d), setting to maximum (20)", Cfg.MaxAgentConcurrency)
+			Cfg.MaxAgentConcurrency = 20
 		}
 
 		if Cfg.LogLevel != "" && !isValidLogLevel(Cfg.LogLevel) {
@@ -179,6 +203,10 @@ func isValidLogLevel(level string) bool {
 	return validLevels[strings.ToLower(level)]
 }
 
+// ViperConfigFileNotFoundError is specifically for viper's own ConfigFileNotFoundError
+// This helps differentiate it from a general os.ErrNotExist if we were checking that directly.
+type ViperConfigFileNotFoundError = viper.ConfigFileNotFoundError
+
 // GetConfig returns the loaded application configuration.
 // It ensures that LoadConfig has been called.
 func GetConfig() AppConfig {
@@ -199,7 +227,3 @@ func GetConfig() AppConfig {
 	}
 	return Cfg
 }
-
-// ViperConfigFileNotFoundError is an alias for viper.ConfigFileNotFoundError
-// This is used for type assertion with errors.As.
-type ViperConfigFileNotFoundError = viper.ConfigFileNotFoundError

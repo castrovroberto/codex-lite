@@ -101,7 +101,7 @@ Examples:
 		p := tea.NewProgram(
 			chatAppModel,
 			tea.WithAltScreen(),
-			tea.WithMouseCellMotion(),
+			tea.WithMouseAllMotion(),
 		)
 
 		if _, err := p.Run(); err != nil {

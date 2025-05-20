@@ -2,54 +2,58 @@ package tui
 
 import (
 	"fmt"
-	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Run initializes and runs the TUI
 func Run(provider, model, sessionID string) error {
+	m := NewModel(provider, model, sessionID)
 	p := tea.NewProgram(
-		NewModel(provider, model, sessionID),
+		&m,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
+	m.SetProgram(p)
 
-	m, err := p.Run()
+	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error running TUI program: %w", err)
 	}
 
-	// Type assert to our model and check if there was an error
-	if finalModel, ok := m.(Model); ok {
-		if finalModel.err != nil {
-			return finalModel.err
+	if fm, ok := finalModel.(*Model); ok {
+		if fm.Err() != nil {
+			return fm.Err()
 		}
+	} else {
+		return fmt.Errorf("unexpected model type returned from TUI: %T", finalModel)
 	}
 
 	return nil
 }
 
 // RunWithModel runs the TUI with a pre-configured model
-func RunWithModel(m Model) error {
+func RunWithModel(m *Model) error {
 	p := tea.NewProgram(
 		m,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
+	m.SetProgram(p)
 
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error running TUI program: %w", err)
 	}
 
-	// Type assert to our model and check if there was an error
-	if m, ok := finalModel.(Model); ok {
-		if m.err != nil {
-			return m.err
+	if fm, ok := finalModel.(*Model); ok {
+		if fm.Err() != nil {
+			return fm.Err()
 		}
+	} else {
+		return fmt.Errorf("unexpected model type returned from TUI: %T", finalModel)
 	}
 
 	return nil

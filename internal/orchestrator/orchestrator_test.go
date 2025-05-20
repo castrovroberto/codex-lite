@@ -160,13 +160,18 @@ func TestRunAgents(t *testing.T) {
 	filePath := "test/file.go"
 	fileContent := "package test\n\nfunc main() {}"
 
+	// Create a dummy progress channel for tests that don't explicitly check progress.
+	// It needs to be buffered so that sends don't block if no one is listening.
+	// The orchestrator will close it.
+	dummyProgressChan := make(chan AgentProgressUpdate, 10) // Buffer of 10 should be ample
+
 	t.Run("SingleSuccessfulAgent", func(t *testing.T) {
 		o := NewBasicOrchestrator()
 		agentA := &mockAgent{name: "agentA", output: "AgentA"}
 		require.NoError(t, o.RegisterAgent(agentA))
 
 		ctx := createTestContext(baseAppCfg)
-		results, err := o.RunAgents(ctx, []string{"agentA"}, filePath, fileContent)
+		results, err := o.RunAgents(ctx, []string{"agentA"}, filePath, fileContent, dummyProgressChan)
 
 		require.NoError(t, err, "Orchestrator should not return an error")
 		require.Len(t, results, 1, "Should have one result")
@@ -184,7 +189,7 @@ func TestRunAgents(t *testing.T) {
 		require.NoError(t, o.RegisterAgent(agentB))
 
 		ctx := createTestContext(baseAppCfg)
-		results, err := o.RunAgents(ctx, []string{"agentA", "agentB"}, filePath, fileContent)
+		results, err := o.RunAgents(ctx, []string{"agentA", "agentB"}, filePath, fileContent, dummyProgressChan)
 
 		require.NoError(t, err)
 		require.Len(t, results, 2)
@@ -210,7 +215,7 @@ func TestRunAgents(t *testing.T) {
 		require.NoError(t, o.RegisterAgent(agentC))
 
 		ctx := createTestContext(baseAppCfg)
-		results, err := o.RunAgents(ctx, []string{"agentA", "agentB", "agentC"}, filePath, fileContent)
+		results, err := o.RunAgents(ctx, []string{"agentA", "agentB", "agentC"}, filePath, fileContent, dummyProgressChan)
 
 		require.NoError(t, err, "Orchestrator itself should not error if an agent fails")
 		require.Len(t, results, 3)
@@ -234,7 +239,9 @@ func TestRunAgents(t *testing.T) {
 		require.NoError(t, o.RegisterAgent(agentA))
 
 		ctx := createTestContext(baseAppCfg)
-		results, err := o.RunAgents(ctx, []string{"agentA", "unknown-agent"}, filePath, fileContent)
+		// For this test, create a fresh dummy channel, as the previous one might be closed by other test runs if not careful.
+		currentTestDummyProgressChan := make(chan AgentProgressUpdate, 10)
+		results, err := o.RunAgents(ctx, []string{"agentA", "unknown-agent"}, filePath, fileContent, currentTestDummyProgressChan)
 
 		require.NoError(t, err)
 		require.Len(t, results, 2)
@@ -251,7 +258,7 @@ func TestRunAgents(t *testing.T) {
 	t.Run("EmptyAgentList", func(t *testing.T) {
 		o := NewBasicOrchestrator()
 		ctx := createTestContext(baseAppCfg)
-		results, err := o.RunAgents(ctx, []string{}, filePath, fileContent)
+		results, err := o.RunAgents(ctx, []string{}, filePath, fileContent, dummyProgressChan)
 
 		require.NoError(t, err)
 		assert.Empty(t, results, "Should return empty results for an empty agent list")
@@ -266,7 +273,7 @@ func TestRunAgents(t *testing.T) {
 		appCfgWithCustomModel := &config.AppConfig{DefaultModel: customModel}
 		ctx := createTestContext(appCfgWithCustomModel)
 
-		_, err := o.RunAgents(ctx, []string{"spy"}, filePath, fileContent)
+		_, err := o.RunAgents(ctx, []string{"spy"}, filePath, fileContent, dummyProgressChan)
 		require.NoError(t, err)
 
 		spy.mu.Lock()
@@ -316,7 +323,13 @@ func TestRunAgents(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			results, runErr = o.RunAgents(ctx, []string{"agentA", "agentB-cancellable", "agentC"}, filePath, fileContent)
+			// For this specific test, we might want to drain the progress chan to avoid blocking, or use a new one.
+			cancellableProgressChan := make(chan AgentProgressUpdate, 10)
+			go func() {
+				for range cancellableProgressChan { // Drain the channel
+				}
+			}()
+			results, runErr = o.RunAgents(ctx, []string{"agentA", "agentB-cancellable", "agentC"}, filePath, fileContent, cancellableProgressChan)
 		}()
 
 		// Wait for agentB to start
@@ -363,7 +376,7 @@ func TestRunAgents(t *testing.T) {
 		ctx = context.WithValue(ctx, contextkeys.LoggerKey, logger)
 		// Deliberately omit contextkeys.ConfigKey
 
-		results, err := o.RunAgents(ctx, []string{"agentA"}, filePath, fileContent)
+		results, err := o.RunAgents(ctx, []string{"agentA"}, filePath, fileContent, dummyProgressChan)
 
 		// This assertion depends on the BasicOrchestrator's implementation.
 		// Based on the assumed implementation in thought process, it should error out.
@@ -382,7 +395,7 @@ func TestRunAgents(t *testing.T) {
 		ctx, cancel := context.WithCancel(createTestContext(baseAppCfg))
 		cancel() // Cancel immediately
 
-		results, err := o.RunAgents(ctx, []string{"agentA"}, filePath, fileContent)
+		results, err := o.RunAgents(ctx, []string{"agentA"}, filePath, fileContent, dummyProgressChan)
 
 		require.ErrorIs(t, err, context.Canceled, "Orchestrator RunAgents should return context.Canceled")
 		// Depending on when the check happens, results might be empty or contain the first agent if it's super fast.

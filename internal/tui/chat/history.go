@@ -29,7 +29,7 @@ func (m *Model) SaveHistory() error {
 	}
 
 	// Create history directory if it doesn't exist
-	historyDir := filepath.Join(os.Getenv("HOME"), ".codex-lite", "chat_history")
+	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
 	if err := os.MkdirAll(historyDir, 0755); err != nil {
 		return fmt.Errorf("failed to create history directory: %w", err)
 	}
@@ -54,7 +54,7 @@ func (m *Model) SaveHistory() error {
 
 // LoadHistory loads chat history from a file
 func LoadHistory(sessionID string) (*ChatHistory, error) {
-	historyDir := filepath.Join(os.Getenv("HOME"), ".codex-lite", "chat_history")
+	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
 	filepath := filepath.Join(historyDir, fmt.Sprintf("chat_%s.json", sessionID))
 
 	data, err := os.ReadFile(filepath)
@@ -72,7 +72,7 @@ func LoadHistory(sessionID string) (*ChatHistory, error) {
 
 // ListChatSessions returns a list of available chat session IDs
 func ListChatSessions() ([]string, error) {
-	historyDir := filepath.Join(os.Getenv("HOME"), ".codex-lite", "chat_history")
+	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
 
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(historyDir, 0755); err != nil {

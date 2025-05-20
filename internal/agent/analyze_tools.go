@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/castrovroberto/codex-lite/internal/analyzer"
+	"github.com/castrovroberto/CGE/internal/analyzer"
 )
 
 // CodebaseAnalyzeTool implements codebase analysis capability

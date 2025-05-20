@@ -1,4 +1,4 @@
-module github.com/castrovroberto/codex-lite
+module github.com/castrovroberto/CGE
 
 go 1.23.0
 
@@ -29,7 +29,7 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/spf13/viper v1.18.2
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/sync v0.13.0
+	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
@@ -41,7 +41,6 @@ require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
@@ -49,7 +48,6 @@ require (
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
@@ -65,10 +63,7 @@ require (
 	golang.org/x/term v0.31.0 // indirect
 )
 
-require (
-	github.com/alecthomas/chroma v0.10.0
-	github.com/stretchr/testify v1.8.4
-)
+require github.com/alecthomas/chroma v0.10.0
 
 require (
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect

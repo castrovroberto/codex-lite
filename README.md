@@ -1,15 +1,17 @@
-# codex-lite 🚀
+# Codex-GPT-Engineer (CGE) 🚀
 
 <!-- Optional: Add a logo or a relevant image here -->
-<!-- <img src="path/to/your/logo.png" alt="Codex Lite Logo" width="150" style="float: right;"> -->
+<!-- <img src="path/to/your/logo.png" alt="CGE Logo" width="150" style="float: right;"> -->
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/castrovroberto/codex-lite)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/castrovroberto/CGE)
 
-**Codex Lite: Your AI-powered coding assistant.** It's a command-line tool that leverages local LLMs (via Ollama) to provide code explanation, analysis, and interactive chat capabilities. Built with Go, Cobra, and Bubble Tea for a rich TUI experience.
+**Codex-GPT-Engineer (CGE): Your AI-powered partner for engineering complex software projects.** CGE is evolving from `CGE` into a sophisticated command-line tool that leverages LLMs (via Ollama or OpenAI) to assist with project planning, code generation, automated reviews, and knowledge graph integration.
+
+**Note:** This project is currently undergoing a significant refactoring from its `CGE` origins to the new CGE architecture. Some features described may be in development.
 
 ---
 
-## 📌 Table of Contents
+##  Table of Contents
 
 1.  [Overview](#1-overview)
 2.  [Key Features](#2-key-features)
@@ -32,60 +34,57 @@
 
 ## **1️⃣ Overview**
 
-**Codex Lite** is a versatile CLI tool designed to enhance your coding workflow by integrating with local Large Language Models (LLMs) through Ollama. It allows you to:
-*   **Analyze your code:** Get insights, identify potential issues (syntax, smells, security vulnerabilities), and understand complex code segments.
-*   **Chat with an LLM:** Engage in interactive conversations about your code or general programming topics.
+**Codex-GPT-Engineer (CGE)** is a versatile CLI tool designed to enhance your software engineering workflow. It integrates with Large Language Models (LLMs) like those accessible via Ollama and OpenAI to:
+*   **Plan Projects:** Generate comprehensive development plans based on your requirements.
+*   **Generate Code:** Create new files or modify existing ones based on the generated plan.
+*   **Automated Review & Iteration:** Validate generated code using tests and linters, and iteratively refine it with LLM assistance.
+*   **Knowledge Graph Memory (KGM):** Leverage a knowledge graph to provide deeper context and memory to the LLM over time.
+*   **(Future) TUI:** Offer an intuitive Terminal User Interface for managing the CGE workflow.
 
-The tool is built using Go and features a Terminal User Interface (TUI) powered by Bubble Tea for an enhanced user experience, especially for the chat and analysis results display. Configuration is flexible, supporting YAML files, environment variables, and command-line flags.
+The tool is built using Go. Configuration is managed via `codex.toml`, environment variables, and command-line flags.
 
 ---
 
 ## **2️⃣ Key Features**
 
--   **AI-Powered Code Analysis:**
-    -   Multiple analysis agents: `explain`, `syntax`, `smell`, `security`, `advanced`.
-    -   Recursive file scanning with pattern matching and filtering by extension or directory.
-    -   Customizable analysis depth and ignored directories.
-    -   TUI for results display or plain text/JSON/Markdown/SARIF output.
--   **Interactive LLM Chat:**
-    -   Engage in conversation with your chosen Ollama model.
-    -   Session management: Continue previous chats and list available sessions.
-    -   Chat history saved locally (`~/.codex-lite/chat_history/`).
-    -   User-friendly TUI chat interface.
-    -   Displays AI response processing time for each message.
-    -   Live "thinking" timer in the status bar while waiting for AI response.
--   **Ollama Integration:** Seamlessly connects to your local Ollama instance.
+-   **LLM-Driven Project Planning:** Generates structured `plan.json` from high-level goals.
+-   **Automated Code Generation & Modification:** Applies changes based on the plan, with support for dry-runs and diffs.
+-   **Interactive Review Loop:** Executes tests/linters, feeds results back to LLM for corrections.
+-   **Knowledge Graph Memory (KGM):** (Upcoming) Stores and retrieves project context using a graph database.
+-   **Multi-Provider LLM Support:**
+    -   Ollama for local models.
+    -   OpenAI for access to powerful cloud models (with budget tracking).
 -   **Flexible Configuration:**
-    -   YAML configuration file (`$HOME/.codex-lite.yaml` or `./.codex-lite.yaml`).
-    -   Environment variables (prefixed with `CODEXLITE_`).
+    -   TOML configuration file (`codex.toml`).
+    -   Environment variables (prefixed with `CGE_`).
     -   Command-line flags for overriding settings.
 -   **Built with Go:** Efficient and portable.
--   **CLI and TUI:** Offers both a powerful command-line interface (via Cobra) and an optional rich terminal user interface (via Bubble Tea).
+-   **Evolving CLI:** Commands being refactored to `plan`, `generate`, `diff`, `review`, `run`, `kg query`.
+-   **(Future) Rich TUI:** For an enhanced user experience.
 
 ---
 
 ## **3️⃣ Project Structure 📁**
 
 ```bash
-📂 codex-lite/
-┣ 📂 cmd/                   # Cobra command definitions (root, analyze, chat)
+📂 cge/ (formerly CGE)
+┣ 📂 cmd/                   # Cobra command definitions (e.g., plan, generate, review)
 ┣ 📂 internal/               # Core application logic
-┃ ┣ 📂 agents/             # Implementations for analysis agents (explain, syntax, etc.)
-┃ ┣ 📂 config/             # Configuration loading (Viper)
+┃ ┣ 📂 config/             # Configuration loading (Viper, codex.toml)
+┃ ┣ 📂 llm/                # LLM client interfaces and implementations (Ollama, OpenAI)
+┃ ┣ 📂 kgm/                # Knowledge Graph Memory client and logic (Upcoming)
 ┃ ┣ 📂 contextkeys/        # Keys for context values
 ┃ ┣ 📂 logger/             # Logging setup
-┃ ┣ 📂 ollama/             # Ollama client logic
-┃ ┣ 📂 orchestrator/       # Manages agent execution during analysis
-┃ ┣ 📂 report/             # Formatting analysis output
 ┃ ┣ 📂 scanner/            # File system scanning logic
-┃ ┗ 📂 tui/                # Bubble Tea components for Terminal User Interface
-┣ 📄 .codex-lite.yaml       # Example configuration file
+┃ ┗ 📂 tui/                # Bubble Tea components for TUI (To be adapted)
+// ... (other CGE-specific internal packages as they are developed, e.g., planner, generator, reviewer)
+┣ 📄 codex.toml             # Main configuration file (TOML format)
 ┣ 📄 .gitignore              # Git ignore rules
-┣ 📄 Dockerfile              # For building Docker container
+┣ 📄 Dockerfile              # For building Docker container (To be reviewed/updated)
 ┣ 📄 .dockerignore           # Specifies files to exclude from Docker build context
 ┣ 📄 go.mod                 # Go module definition
 ┣ 📄 go.sum                 # Go module checksums
-┣ 📄 LICENSE                # Project license (Please add one!)
+┣ 📄 LICENSE                # Project license
 ┣ 📄 main.go                # Main application entry point
 ┗ 📄 README.md              # This file
 ```
@@ -97,155 +96,110 @@ The tool is built using Go and features a Terminal User Interface (TUI) powered 
 ### **🔹 Prerequisites**
 
 -   **Go:** Version 1.23 or higher (see `go.mod` for the exact version).
--   **Ollama:** A running Ollama instance with your desired models pulled (e.g., `ollama pull llama2`). Get it from [ollama.com](https://ollama.com/).
+-   **LLM Provider:**
+    -   **Ollama:** A running Ollama instance with your desired models pulled (e.g., `ollama pull llama3`). Get it from [ollama.com](https://ollama.com/).
+    -   **OpenAI:** (Optional) An OpenAI API key if you plan to use OpenAI models.
 -   **(Optional) Docker:** If you plan to use the Docker image.
 
 ### **🔹 Installation**
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/castrovroberto/codex-lite.git
-    cd codex-lite
+    git clone https://github.com/castrovroberto/CGE.git cge # Consider renaming the directory
+    cd cge
     ```
 
-2.  **Build the binary:**
+2.  **Build the binary (example name `cge`):**
     ```bash
-    go build -o codex-lite main.go
+    go build -o cge main.go
     ```
-    This will create an executable `codex-lite` in the current directory. You can move this to a directory in your `PATH` (e.g., `/usr/local/bin` or `~/bin`) for easier access.
+    This will create an executable `cge` in the current directory. You can move this to a directory in your `PATH`.
 
-    Alternatively, you can install directly using `go install`:
+    Alternatively, you can install directly using `go install` (ensure your `go.mod` reflects the new project name if it changes):
     ```bash
-    go install github.com/castrovroberto/codex-lite@latest
+    # If module path is updated in go.mod, use that path here
+    # go install github.com/your-username/cge@latest
     ```
-    This will install the binary to your `$GOPATH/bin` or `$HOME/go/bin` directory.
 
 ### **🔹 Configuration**
 
-Codex Lite can be configured in three ways (in order of precedence: flags > env vars > config file):
+CGE can be configured in three ways (in order of precedence: flags > env vars > config file):
 
-1.  **Configuration File:**
-    Create a YAML file named `.codex-lite.yaml` in your home directory (`~/.codex-lite.yaml`) or the current project directory (`./.codex-lite.yaml`).
-    An example `system-prompt.md` is also provided in the repository which can be referenced by `chat_system_prompt_file`.
+1.  **Configuration File (`codex.toml`):**
+    Create a TOML file named `codex.toml` in your home directory (`~/.cge/codex.toml` or `~/.codex.toml`) or the current project directory (`./codex.toml`).
+    An example `codex.toml` is provided in the repository.
 
-    Example `.codex-lite.yaml`:
-    ```yaml
-    # Ollama settings
-    ollama_host_url: "http://localhost:11434" # URL of your Ollama instance
-    default_model: "llama3:latest"           # Default model to use for chat and analysis
-    ollama_request_timeout: "120s"           # Timeout for Ollama API requests
-    ollama_keep_alive: "5m"                  # How long models stay loaded
+    Example `codex.toml` (refer to the actual `codex.toml` in the repo for more details):
+    ```toml
+    version = "0.1.0"
 
-    # Chat specific settings
-    # Defines the AI's default behavior in chat by loading the specified file.
-    # Path to a markdown file (e.g., "system-prompt.md" or "/abs/path/to/prompt.md").
-    # If empty, file not found, or file is empty, a default internal prompt is used.
-    chat_system_prompt_file: "system-prompt.md"
+    [llm]
+      provider = "ollama"  # "ollama" or "openai"
+      model = "llama3"
+      # request_timeout_seconds = "300s"
 
-    # Analysis settings (example)
-    # max_concurrent_analyzers: 5 # For file scanning, if different from agent concurrency
-    max_agent_concurrency: 1    # Max agents the orchestrator runs in parallel (1 for sequential, >1 for parallel)
-    # workspace_root: "."
-
-    # Logging level (e.g., debug, info, warn, error)
-    log_level: "info"
+    [logging]
+      level = "info"
     ```
 
 2.  **Environment Variables:**
-    Set environment variables prefixed with `CODEXLITE_`.
+    Set environment variables prefixed with `CGE_`. For nested keys in `codex.toml`, use an underscore (e.g., `CGE_LLM_PROVIDER`).
     Example:
     ```bash
-    export CODEXLITE_OLLAMA_HOST_URL="http://localhost:11434"
-    export CODEXLITE_DEFAULT_MODEL="mistral"
-    export CODEXLITE_CHAT_SYSTEM_PROMPT_FILE="path/to/your/system-prompt.md"
-    export CODEXLITE_MAX_AGENT_CONCURRENCY=4
-    export CODEXLITE_LOG_LEVEL="debug"
+    export CGE_LLM_PROVIDER="openai"
+    export CGE_LLM_MODEL="gpt-4-turbo"
+    export OPENAI_API_KEY="your_openai_api_key" # Note: OPENAI_API_KEY is a special case
+    export CGE_LOGGING_LEVEL="debug"
     ```
 
 3.  **Command-line Flags:**
-    Many configuration options can be overridden directly via command-line flags. See `codex-lite --help`, `codex-lite analyze --help`, and `codex-lite chat --help`.
+    Many configuration options can be overridden directly via command-line flags. See `cge --help` and help for specific subcommands (e.g., `cge plan --help`).
 
-    Persistent flags (apply to all commands):
-    *   `--config FILE_PATH`: Path to the configuration file.
-    *   `--ollama-host-url URL`: Ollama host URL.
-    *   `--default-model MODEL_NAME`: Default LLM model.
-    *   `--default-agent-list AGENT1,AGENT2`: Comma-separated list of default agents for analysis.
+    Persistent flags (apply to all commands - to be updated as CGE evolves):
+    *   `--config FILE_PATH`: Path to the `codex.toml` configuration file.
+    *   `--llm-provider PROVIDER_NAME`: (Example) LLM Provider (ollama, openai).
+    *   `--llm-model MODEL_NAME`: (Example) LLM model.
 
 ---
 
 ## **5️⃣ Usage**
 
-Ensure Ollama is running and the desired models are available.
+Ensure your chosen LLM provider (Ollama or OpenAI) is configured and running.
 
-### **Analyze Command**
+**Note:** The commands below reflect the target CGE structure and are under development.
 
-The `analyze` command processes specified code files or patterns using a suite of agents.
-
-**Basic usage:**
+### **`plan` Command**
+Generates a `plan.json` file detailing the steps to achieve a given software development goal.
 ```bash
-codex-lite analyze [file_patterns...]
+cge plan --goal "Refactor the authentication module to use JWT"
 ```
 
-**Examples:**
+### **`generate` Command**
+Reads `plan.json` and interacts with the LLM to generate or modify code.
 ```bash
-# Analyze a single Go file with default agents
-codex-lite analyze main.go
-
-# Analyze all .py files in the current directory using only the 'explain' and 'syntax' agents
-codex-lite analyze --agent explain,syntax "*.py"
-
-# Recursively analyze all .js files in the 'src' directory, ignoring 'node_modules'
-codex-lite analyze -r --ignore-dir node_modules "src/**/*.js"
-
-# Analyze with a specific model
-codex-lite analyze --default-model starcoder main.go
-
-# Analyze without TUI and output to a JSON file
-codex-lite analyze --no-tui --format json --output report.json "pkg/**/*.go"
+cge generate
+cge generate --dry-run # To see proposed changes
 ```
 
-**Key `analyze` flags:**
-*   `--agent AGENT_NAME(S)` or `-a`: Comma-separated list of agents to use (e.g., `explain,smell`). If not set, uses agents from config or all available.
-*   `--recursive` or `-r`: Scan directories recursively.
-*   `--max-depth N`: Maximum depth for recursive scanning.
-*   `--ignore-dir DIR_NAME`: Directory to ignore (can be specified multiple times).
-*   `--ext .EXTENSION`: File extension to include (e.g., `.go`, `.py`; can be specified multiple times).
-*   `--no-tui`: Disable TUI output and print to stdout.
-*   `--output FILE_PATH` or `-o`: Output file for results (when `--no-tui` is used).
-*   `--format FORMAT`: Output format when `--no-tui` is used (`text`, `json`, `markdown`, `sarif`). Defaults to `text`.
-
-Run `codex-lite analyze --help` for all options.
-
-### **Chat Command**
-
-The `chat` command starts an interactive chat session with an LLM.
-
-**Basic usage:**
+### **`diff` Command**
+Shows differences and allows interactive application of generated patches.
 ```bash
-codex-lite chat
+cge diff
 ```
 
-**Examples:**
+### **`review` Command**
+Executes tests/linters, feeds results back to LLM for patch revisions.
 ```bash
-# Start a new chat session using the default model
-codex-lite chat
-
-# Start a chat session with a specific model
-codex-lite chat --model mistral
-
-# List available chat sessions
-codex-lite chat --list-sessions
-
-# Continue a previous chat session
-codex-lite chat --session <session_id_from_list>
+cge review
 ```
 
-**Key `chat` flags:**
-*   `--model MODEL_NAME` or `-m`: Model to use for the chat session (overrides default).
-*   `--session SESSION_ID` or `-s`: Session ID to continue a previous chat.
-*   `--list-sessions`: List available chat sessions.
+### **(Legacy) `chat` Command**
+The `chat` command from `CGE` may be retained or adapted.
+```bash
+cge chat
+```
 
-Run `codex-lite chat --help` for all options. Chat history is saved in `~/.codex-lite/chat_history/`.
+Run `cge <command> --help` for all options.
 
 ---
 
@@ -257,9 +211,9 @@ You can build and run Codex Lite as a Docker container. This is useful for isola
 
 Ensure you have Docker installed. From the root of the project directory (where the `Dockerfile` is located):
 ```bash
-docker build -t codex-lite-app .
+docker build -t cge-app .
 ```
-You can tag the image differently if you prefer (e.g., `yourusername/codex-lite:latest`).
+You can tag the image differently if you prefer (e.g., `yourusername/CGE:latest`).
 
 ### **Running with Docker**
 
@@ -271,7 +225,7 @@ When running Codex Lite in Docker, you need to ensure it can communicate with yo
    **Using `host.docker.internal` (recommended for Mac/Windows Docker Desktop):**
    ```bash
    docker run -it --rm \
-     codex-lite-app \
+     cge-app \
      --ollama-host-url="http://host.docker.internal:11434" chat --model your_model
    ```
    Replace `your_model` with a model you have pulled in Ollama.
@@ -280,26 +234,26 @@ When running Codex Lite in Docker, you need to ensure it can communicate with yo
    This makes the container share the host's network stack.
    ```bash
    docker run -it --rm --network="host" \
-     codex-lite-app \
+     cge-app \
      chat --model your_model
    ```
-   If using host networking, `codex-lite` inside the container can usually connect to `http://localhost:11434` if Ollama is listening on all interfaces or on `localhost` on the host. You might still need to pass `--ollama-host-url="http://localhost:11434"` if the default in the app or its config doesn't align.
+   If using host networking, `CGE` inside the container can usually connect to `http://localhost:11434` if Ollama is listening on all interfaces or on `localhost` on the host. You might still need to pass `--ollama-host-url="http://localhost:11434"` if the default in the app or its config doesn't align.
 
 **2. Mounting local configuration and history (optional but recommended for persistence):**
    To persist chat history and use a local configuration file:
    ```bash
    # Create directories on host if they don't exist
-   mkdir -p $HOME/.codex-lite/chat_history
-   # Ensure your .codex-lite.yaml is in $HOME/.codex-lite.yaml or provide its path
+   mkdir -p $HOME/.cge/chat_history
+   # Ensure your .cge.yaml is in $HOME/.cge.yaml or provide its path
 
    docker run -it --rm \
-     -v "$HOME/.codex-lite:/home/appuser/.codex-lite" \
-     codex-lite-app \
-     --config="/home/appuser/.codex-lite/.codex-lite.yaml" \
+     -v "$HOME/.cge:/home/appuser/.cge" \
+     cge-app \
+     --config="/home/appuser/.cge/.cge.yaml" \
      --ollama-host-url="http://host.docker.internal:11434" \
      chat
    ```
-   *Note:* The `Dockerfile` creates a non-root user `appuser`. The application looks for config in `$HOME/.codex-lite.yaml` which inside the container for `appuser` is `/home/appuser/.codex-lite.yaml`.
+   *Note:* The `Dockerfile` creates a non-root user `appuser`. The application looks for config in `$HOME/.cge.yaml` which inside the container for `appuser` is `/home/appuser/.cge.yaml`.
 
 **3. Analyzing local files:**
    To analyze files from your host machine, you need to mount the relevant directory into the container.
@@ -307,7 +261,7 @@ When running Codex Lite in Docker, you need to ensure it can communicate with yo
    docker run -it --rm \
      -v "$(pwd):/src" \
      -w /src \
-     codex-lite-app \
+     cge-app \
      --ollama-host-url="http://host.docker.internal:11434" \
      analyze "your_file.go"
    ```
@@ -315,14 +269,14 @@ When running Codex Lite in Docker, you need to ensure it can communicate with yo
 
 **Important Considerations for Docker:**
 *   **Ollama Accessibility:** The most common issue is the Docker container not being able to reach Ollama. Ensure your Ollama instance is configured to accept connections from the Docker container's IP or from `host.docker.internal`. If Ollama is also in Docker, they might need to be on the same Docker network.
-*   **Models:** The LLM models themselves reside within your Ollama instance, not in the `codex-lite-app` Docker image.
+*   **Models:** The LLM models themselves reside within your Ollama instance, not in the `cge-app` Docker image.
 
 ---
 
 ## **7️⃣ Contributing**
 
 Contributions are welcome! If you'd like to contribute:
-1.  Fork the Project (`https://github.com/castrovroberto/codex-lite/fork`)
+1.  Fork the Project (`https://github.com/castrovroberto/CGE/fork`)
 2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
 3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
 4.  Push to the Branch (`git push origin feature/AmazingFeature`)

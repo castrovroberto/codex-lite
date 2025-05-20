@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/castrovroberto/codex-lite/internal/config"
-	"github.com/castrovroberto/codex-lite/internal/logger"
+	"github.com/castrovroberto/CGE/internal/config"
+	"github.com/castrovroberto/CGE/internal/logger"
 )
 
 // Key type to avoid collisions in context values

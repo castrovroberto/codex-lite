@@ -1,0 +1,32 @@
+version = "0.1.0"
+
+[llm]
+  provider = "ollama" # "ollama" or "openai"
+  model = "deepseek-coder-v2:16b"
+  ollama_host_url = "http://192.168.0.15:11434"
+  # For OpenAI, set OPENAI_API_KEY environment variable
+  # request_timeout_seconds = 300 # Example
+
+[kgm] # Knowledge Graph Memory
+  # enabled = false
+  # address = "http://localhost:7474" # Example Neo4j address
+  # graphiti_api_url = "http://localhost:8000/api" # Example Graphiti API
+
+[project]
+  # default_ignore_dirs = [".git", ".idea", "node_modules", "vendor", "target", "dist", "build"]
+  # default_source_extensions = [".go", ".py", ".js", ".ts", ".java", ".md", ".rs", ".cpp", ".c", ".h", ".hpp"]
+
+[logging]
+  level = "info" # "debug", "info", "warn", "error"
+  # log_file = "cge.log"
+
+[budget]
+  # run_budget_usd = 10.0 # Max USD cost for a run (OpenAI)
+  # max_tokens_per_request = 4096
+  # max_requests_per_minute = 20
+
+[commands]
+  # [commands.review]
+  #   test_command = "go test ./..."
+  #   lint_command = "golangci-lint run"
+  #   max_cycles = 3 

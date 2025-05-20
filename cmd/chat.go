@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/castrovroberto/codex-lite/internal/contextkeys"
-	"github.com/castrovroberto/codex-lite/internal/tui/chat"
+	"github.com/castrovroberto/CGE/internal/contextkeys"
+	"github.com/castrovroberto/CGE/internal/tui/chat"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,15 +21,16 @@ var chatCmd = &cobra.Command{
 	Short: "Start an interactive chat session with an LLM",
 	Long: `Start an interactive chat session with an LLM.
 You can continue a previous session using the --session flag.
-Chat history is automatically saved in ~/.codex-lite/chat_history/.
+Chat history is automatically saved in ~/.cge/chat_history/.
 
 Examples:
-  codex-lite chat                    # Start a new chat session
-  codex-lite chat --model llama2     # Use a specific model
-  codex-lite chat --session <id>     # Continue a previous session
-  codex-lite chat --list-sessions    # List available sessions`,
+  CGE chat                    # Start a new chat session
+  CGE chat --model llama2     # Use a specific model
+  CGE chat --session <id>     # Continue a previous session
+  CGE chat --list-sessions    # List available sessions`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		appCfg := contextkeys.ConfigFromContext(cmd.Context())
+		appCfgValue := contextkeys.ConfigFromContext(cmd.Context())
+		appCfg := &appCfgValue
 		log := contextkeys.LoggerFromContext(cmd.Context())
 
 		if log == nil {
@@ -59,7 +60,7 @@ Examples:
 		// Get model name for chat (from flag or config)
 		chatModelName, _ := cmd.Flags().GetString("model")
 		if chatModelName == "" {
-			chatModelName = appCfg.DefaultModel
+			chatModelName = appCfg.LLM.Model
 		}
 		if chatModelName == "" {
 			log.Error("No model specified for chat and no default model configured.")
@@ -89,7 +90,7 @@ Examples:
 		ctx = context.WithValue(ctx, contextkeys.LoggerKey, log)
 
 		// Initialize chat model with history if available
-		chatAppModel := chat.InitialModel(ctx, &appCfg, chatModelName)
+		chatAppModel := chat.InitialModel(ctx, appCfg, chatModelName)
 		if history != nil {
 			chatAppModel.LoadHistory(history)
 		}

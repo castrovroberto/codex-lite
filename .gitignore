@@ -23,13 +23,13 @@ go.work.sum
 
 # env file
 .env
-.codex-lite.yaml
+.cge.yaml
 
 # project files
 project/
 
 # binaries
-codex-lite
+CGE
 
 # Docker files
 Dockerfile

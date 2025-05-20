@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/castrovroberto/codex-lite/internal/analyzer"
+	"github.com/castrovroberto/CGE/internal/analyzer"
 )
 
 // CodeSearchTool implements semantic code search

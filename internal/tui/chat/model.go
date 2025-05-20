@@ -20,11 +20,11 @@ import (
 	"github.com/alecthomas/chroma/formatters"
 	"github.com/alecthomas/chroma/lexers"
 	"github.com/alecthomas/chroma/styles"
-	"github.com/castrovroberto/codex-lite/internal/agent"
-	"github.com/castrovroberto/codex-lite/internal/config" // Ensure this path and package are correct
-	"github.com/castrovroberto/codex-lite/internal/contextkeys"
-	"github.com/castrovroberto/codex-lite/internal/logger" // Import logger to get the global logger
-	"github.com/castrovroberto/codex-lite/internal/ollama"
+	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/config" // Ensure this path and package are correct
+	"github.com/castrovroberto/CGE/internal/contextkeys"
+	"github.com/castrovroberto/CGE/internal/llm"    // Import the new llm package
+	"github.com/castrovroberto/CGE/internal/logger" // Import logger to get the global logger
 )
 
 type (
@@ -103,6 +103,9 @@ type Model struct {
 
 	// New: Add tool registry
 	toolRegistry *agent.Registry
+
+	// LLM Client
+	llmClient llm.Client // New field for the LLM client
 
 	// Available slash commands for suggestions
 	availableCommands []string
@@ -211,20 +214,34 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		availableCommands: defaultSlashCommands, // Initialize with default commands
 	}
 
+	// Initialize and set the LLM client
+	// For now, we assume Ollama if cfg.LLM.Provider is "ollama" or default
+	if cfg.LLM.Provider == "ollama" || cfg.LLM.Provider == "" { // Default to ollama
+		m.llmClient = llm.NewOllamaClient()
+		m.provider = "Ollama" // Update provider string in model
+	} else {
+		// Placeholder for other providers like OpenAI
+		// m.llmClient = llm.NewOpenAIClient(cfg) // Example
+		// For now, if not ollama, we might log an error or use a nil client
+		logger.Get().Error("Unsupported LLM provider in chat TUI", "provider", cfg.LLM.Provider)
+		// m.llmClient could be nil, fetchOllamaResponse needs to handle this
+		m.provider = cfg.LLM.Provider // Set provider string
+	}
+
 	// Initialize tool registry
 	registry := agent.NewRegistry()
 
 	// Register code analysis tools
-	if err := registry.Register(agent.NewCodeSearchTool(cfg.WorkspaceRoot)); err != nil {
+	if err := registry.Register(agent.NewCodeSearchTool(cfg.Project.WorkspaceRoot)); err != nil {
 		logger.Get().Error("Failed to register code search tool", "error", err)
 	}
-	if err := registry.Register(agent.NewFileReadTool(cfg.WorkspaceRoot)); err != nil {
+	if err := registry.Register(agent.NewFileReadTool(cfg.Project.WorkspaceRoot)); err != nil {
 		logger.Get().Error("Failed to register file read tool", "error", err)
 	}
-	if err := registry.Register(agent.NewCodebaseAnalyzeTool(cfg.WorkspaceRoot)); err != nil {
+	if err := registry.Register(agent.NewCodebaseAnalyzeTool(cfg.Project.WorkspaceRoot)); err != nil {
 		logger.Get().Error("Failed to register codebase analysis tool", "error", err)
 	}
-	if err := registry.Register(agent.NewGitTool(cfg.WorkspaceRoot)); err != nil {
+	if err := registry.Register(agent.NewGitTool(cfg.Project.WorkspaceRoot)); err != nil {
 		logger.Get().Error("Failed to register Git tool", "error", err)
 	}
 
@@ -264,7 +281,7 @@ func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
 		ctxWithValues := context.WithValue(baseCtx, contextkeys.ConfigKey, m.cfg)
 		ctxWithValues = context.WithValue(ctxWithValues, contextkeys.LoggerKey, logger.Get())
 
-		ctx, cancel := context.WithTimeout(ctxWithValues, m.cfg.OllamaRequestTimeout+5*time.Second)
+		ctx, cancel := context.WithTimeout(ctxWithValues, m.cfg.LLM.RequestTimeoutSeconds+5*time.Second)
 		defer cancel()
 
 		// Base system prompt from configuration (content loaded from file via getter)
@@ -304,13 +321,12 @@ If you do not need to use a tool, respond to the user directly without any JSON.
 			}
 		}
 
-		// Prepend the final combined system prompt to the user prompt for Ollama
-		fullPrompt := prompt
-		if finalSystemPrompt != "" {
-			fullPrompt = finalSystemPrompt + "\n\nUser: " + prompt
+		// Ensure llmClient is not nil before using
+		if m.llmClient == nil {
+			return ollamaErrorMsg(fmt.Errorf("LLM client not initialized for provider: %s", m.provider))
 		}
 
-		response, err := ollama.Query(ctx, m.cfg.OllamaHostURL, m.modelName, fullPrompt)
+		response, err := m.llmClient.Generate(ctx, m.modelName, prompt, finalSystemPrompt, toolDescriptions)
 		duration := time.Since(startTime)
 
 		if err != nil {
@@ -451,55 +467,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 
-		case ollamaSuccessResponseMsg:
-			m.loading = false
-			botResponseText := msg.response
-			responseTime := msg.duration
-			// Check for tool invocation
-			var toolInvoke struct {
-				Tool   string          `json:"tool"`
-				Params json.RawMessage `json:"params"`
-			}
-			trimmed := strings.TrimSpace(botResponseText)
-			if strings.HasPrefix(trimmed, "{") {
-				if err := json.Unmarshal([]byte(botResponseText), &toolInvoke); err == nil && toolInvoke.Tool != "" {
-					if tool, ok := m.toolRegistry.Get(toolInvoke.Tool); ok {
-						result, toolErr := tool.Execute(m.parentCtx, toolInvoke.Params)
-						if toolErr != nil {
-							m.replacePlaceholder(chatMessage{
-								text:      fmt.Sprintf("Error executing tool %s: %v", toolInvoke.Tool, toolErr),
-								sender:    "System",
-								timestamp: time.Now(),
-							})
-						} else {
-							resultJSON, _ := json.MarshalIndent(result, "", "  ")
-							m.replacePlaceholder(chatMessage{
-								text:       fmt.Sprintf("Tool %s result:\n```json\n%s\n```", toolInvoke.Tool, string(resultJSON)),
-								sender:     "System",
-								timestamp:  time.Now(),
-								isMarkdown: true,
-							})
-						}
-					} else {
+	case ollamaSuccessResponseMsg:
+		m.loading = false
+		botResponseText := msg.response
+		responseTime := msg.duration
+		// Check for tool invocation
+		var toolInvoke struct {
+			Tool   string          `json:"tool"`
+			Params json.RawMessage `json:"params"`
+		}
+		trimmed := strings.TrimSpace(botResponseText)
+		if strings.HasPrefix(trimmed, "{") {
+			if err := json.Unmarshal([]byte(botResponseText), &toolInvoke); err == nil && toolInvoke.Tool != "" {
+				if tool, ok := m.toolRegistry.Get(toolInvoke.Tool); ok {
+					result, toolErr := tool.Execute(m.parentCtx, toolInvoke.Params)
+					if toolErr != nil {
 						m.replacePlaceholder(chatMessage{
-							text:      fmt.Sprintf("Unknown tool requested: %s", toolInvoke.Tool),
+							text:      fmt.Sprintf("Error executing tool %s: %v", toolInvoke.Tool, toolErr),
 							sender:    "System",
 							timestamp: time.Now(),
 						})
+					} else {
+						resultJSON, _ := json.MarshalIndent(result, "", "  ")
+						m.replacePlaceholder(chatMessage{
+							text:       fmt.Sprintf("Tool %s result:\n```json\n%s\n```", toolInvoke.Tool, string(resultJSON)),
+							sender:     "System",
+							timestamp:  time.Now(),
+							isMarkdown: true,
+						})
 					}
-					m.viewport.GotoBottom()
-					return m, nil
+				} else {
+					m.replacePlaceholder(chatMessage{
+						text:      fmt.Sprintf("Unknown tool requested: %s", toolInvoke.Tool),
+						sender:    "System",
+						timestamp: time.Now(),
+					})
 				}
+				m.viewport.GotoBottom()
+				return m, nil
 			}
-			// Regular AI response
-			m.replacePlaceholder(chatMessage{
-				text:         botResponseText,
-				sender:       "AI",
-				timestamp:    time.Now(),
-				ThinkingTime: responseTime,
-				isMarkdown:   true,
-			})
-			m.viewport.GotoBottom()
+		}
+		// Regular AI response
+		m.replacePlaceholder(chatMessage{
+			text:         botResponseText,
+			sender:       "AI",
+			timestamp:    time.Now(),
+			ThinkingTime: responseTime,
+			isMarkdown:   true,
+		})
+		m.viewport.GotoBottom()
 
 	case ollamaErrorMsg:
 		m.loading = false
@@ -510,15 +526,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			timestamp: time.Now(),
 		})
 
-   case errMsg:
-       m.err = msg
+	case errMsg:
+		m.err = msg
 
-   case tea.MouseMsg:
-       m.viewport, cmd = m.viewport.Update(msg)
-       cmds = append(cmds, cmd)
+	case tea.MouseMsg:
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
 
-	// New: Check if the response is a tool invocation (assuming this was intended from previous structure)
-	// This case might need to be reviewed if it's from an ollamaSuccessResponseMsg.text
+		// New: Check if the response is a tool invocation (assuming this was intended from previous structure)
+		// This case might need to be reviewed if it's from an ollamaSuccessResponseMsg.text
 	}
 
 	// If viewport needs to react to any other messages (e.g., mouse events not directly handled)

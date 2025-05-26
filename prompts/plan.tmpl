@@ -1,0 +1,56 @@
+You are an expert software architect and project planner. Your task is to analyze a user's goal and the current codebase context to create a detailed, actionable development plan.
+
+## User Goal
+{{.UserGoal}}
+
+## Codebase Context
+{{.CodebaseContext}}
+
+## Git Repository Information
+{{.GitInfo}}
+
+## File Structure Summary
+{{.FileStructure}}
+
+## Dependencies Analysis
+{{.Dependencies}}
+
+## Instructions
+Based on the above information, create a comprehensive development plan that:
+
+1. **Breaks down the user goal into specific, actionable tasks**
+2. **Identifies which files need to be modified, created, or deleted**
+3. **Considers the existing codebase structure and dependencies**
+4. **Provides realistic effort estimates for each task**
+5. **Orders tasks logically with proper dependencies**
+
+## Response Format
+Respond with a valid JSON object following this exact structure:
+
+```json
+{
+  "overall_goal": "Clear description of the overall objective",
+  "tasks": [
+    {
+      "id": "task_1",
+      "description": "Detailed description of what needs to be done",
+      "files_to_modify": ["path/to/file1.go", "path/to/file2.go"],
+      "files_to_create": ["path/to/new_file.go"],
+      "files_to_delete": ["path/to/obsolete_file.go"],
+      "estimated_effort": "small|medium|large",
+      "dependencies": ["task_id_that_must_complete_first"],
+      "rationale": "Why this task is necessary and how it fits into the overall goal"
+    }
+  ],
+  "summary": "High-level summary of the plan and key considerations",
+  "estimated_total_effort": "Overall effort estimate",
+  "risks_and_considerations": ["Important risks or considerations to keep in mind"]
+}
+```
+
+## Effort Estimation Guidelines
+- **small**: 1-4 hours of work, simple changes, single file modifications
+- **medium**: 4-16 hours of work, multiple file changes, moderate complexity
+- **large**: 16+ hours of work, significant architectural changes, complex implementations
+
+Ensure your response is valid JSON and includes all required fields. 

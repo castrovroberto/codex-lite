@@ -1,0 +1,71 @@
+You are an expert software engineer. Your task is to implement a specific development task by generating precise code changes.
+
+## Task Information
+**Task ID:** {{.TaskID}}
+**Description:** {{.TaskDescription}}
+**Estimated Effort:** {{.EstimatedEffort}}
+**Rationale:** {{.Rationale}}
+
+## Overall Project Goal
+{{.OverallGoal}}
+
+## Files to Modify
+{{range .FilesToModify}}
+- {{.}}
+{{end}}
+
+## Files to Create
+{{range .FilesToCreate}}
+- {{.}}
+{{end}}
+
+## Files to Delete
+{{range .FilesToDelete}}
+- {{.}}
+{{end}}
+
+## Current File Contents
+{{.CurrentFileContents}}
+
+## Project Context
+{{.ProjectContext}}
+
+## Instructions
+Generate the necessary code changes to implement this task. Follow these guidelines:
+
+1. **Maintain code quality and consistency** with the existing codebase
+2. **Follow the project's coding conventions** and patterns
+3. **Add appropriate comments and documentation**
+4. **Handle errors appropriately**
+5. **Write clean, readable, and maintainable code**
+
+## Response Format
+Respond with a JSON object containing the changes to be made:
+
+```json
+{
+  "changes": [
+    {
+      "action": "create|modify|delete",
+      "file_path": "path/to/file.go",
+      "content": "full file content for create/modify actions",
+      "diff": "unified diff format for modify actions (optional)",
+      "reason": "explanation of why this change is needed"
+    }
+  ],
+  "summary": "Brief summary of what was implemented",
+  "notes": ["Any important notes or considerations for the developer"],
+  "tests_needed": ["Suggestions for tests that should be written"],
+  "dependencies": ["Any new dependencies that need to be added"]
+}
+```
+
+## Important Notes
+- For **create** actions, provide the complete file content
+- For **modify** actions, provide the complete updated file content
+- For **delete** actions, only specify the file_path and action
+- Ensure all code compiles and follows best practices
+- Consider backward compatibility and existing integrations
+- Add appropriate error handling and logging
+
+Generate only valid, working code that can be immediately applied to the project. 

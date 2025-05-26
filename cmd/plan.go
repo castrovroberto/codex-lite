@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"github.com/castrovroberto/CGE/internal/context"
 	"github.com/castrovroberto/CGE/internal/contextkeys"
-	"github.com/castrovroberto/CGE/internal/llm" // Assuming ollama_client is in here and Client interface
+	"github.com/castrovroberto/CGE/internal/llm"
+	"github.com/castrovroberto/CGE/internal/templates"
 	"github.com/spf13/cobra"
 )
 
@@ -18,13 +21,17 @@ type PlanTask struct {
 	FilesToCreate   []string `json:"files_to_create,omitempty"`
 	FilesToDelete   []string `json:"files_to_delete,omitempty"`
 	EstimatedEffort string   `json:"estimated_effort,omitempty"` // e.g., "small", "medium", "large"
+	Dependencies    []string `json:"dependencies,omitempty"`
+	Rationale       string   `json:"rationale,omitempty"`
 }
 
 // Plan represents the structure of the plan.json file.
 type Plan struct {
-	OverallGoal string     `json:"overall_goal"`
-	Tasks       []PlanTask `json:"tasks"`
-	Summary     string     `json:"summary,omitempty"`
+	OverallGoal            string     `json:"overall_goal"`
+	Tasks                  []PlanTask `json:"tasks"`
+	Summary                string     `json:"summary,omitempty"`
+	EstimatedTotalEffort   string     `json:"estimated_total_effort,omitempty"`
+	RisksAndConsiderations []string   `json:"risks_and_considerations,omitempty"`
 }
 
 var (
@@ -70,19 +77,52 @@ Example:
 			return fmt.Errorf("unsupported LLM provider: %s", cfg.LLM.Provider)
 		}
 
-		// 2. Repository Walker & Context Gathering (Simplified for now)
-		// In a real scenario, this would involve scanning files, getting summaries, etc.
-		// For this initial implementation, we'll send a simplified context.
-		// TODO: Leverage internal/scanner/scanner.go
-		// TODO: Integrate parts of internal/analyzer/codebase.go for codebase statistics.
-		codeContext := "Placeholder: Gathered codebase context (e.g., list of key files, project structure summary)."
-		logger.Debug("Gathered (placeholder) codebase context")
+		// 2. Repository Walker & Context Gathering
+		logger.Info("Gathering codebase context...")
 
-		// 3. Plan Generation Logic
-		// TODO: Implement proper prompt assembly using prompts/plan.tmpl
-		// For now, a simple combined prompt:
-		systemPrompt := "You are an AI assistant that helps create software development plans. Respond in JSON format. The JSON should have 'overall_goal', 'tasks' (an array of objects with 'id', 'description'), and 'summary'."
-		fullPrompt := fmt.Sprintf("User Goal: %s\n\nCodebase Context:\n%s\n\nGenerate a plan.", userGoal, codeContext)
+		// Get workspace root from config or current directory
+		workspaceRoot := cfg.Project.WorkspaceRoot
+		if workspaceRoot == "" {
+			var err error
+			workspaceRoot, err = os.Getwd()
+			if err != nil {
+				return fmt.Errorf("failed to get current directory: %w", err)
+			}
+		}
+
+		// Gather real codebase context
+		gatherer := context.NewGatherer(workspaceRoot)
+		contextInfo, err := gatherer.GatherContext()
+		if err != nil {
+			logger.Error("Failed to gather codebase context", "error", err)
+			return fmt.Errorf("failed to gather codebase context: %w", err)
+		}
+		logger.Debug("Successfully gathered codebase context")
+
+		// 3. Plan Generation Logic using template
+		logger.Info("Generating plan with template...")
+
+		// Get prompts directory (relative to workspace root)
+		promptsDir := filepath.Join(workspaceRoot, "prompts")
+		templateEngine := templates.NewEngine(promptsDir)
+
+		// Prepare template data
+		templateData := templates.PlanTemplateData{
+			UserGoal:        userGoal,
+			CodebaseContext: contextInfo.CodebaseAnalysis,
+			GitInfo:         contextInfo.GitInfo,
+			FileStructure:   contextInfo.FileStructure,
+			Dependencies:    contextInfo.Dependencies,
+		}
+
+		// Render the prompt template
+		fullPrompt, err := templateEngine.Render("plan.tmpl", templateData)
+		if err != nil {
+			logger.Error("Failed to render plan template", "error", err)
+			return fmt.Errorf("failed to render plan template: %w", err)
+		}
+
+		systemPrompt := "You are an expert software architect and project planner. Respond only with valid JSON."
 
 		logger.Info("Generating plan with LLM...", "model", cfg.LLM.Model)
 		llmResponse, err := llmClient.Generate(ctx, cfg.LLM.Model, fullPrompt, systemPrompt, nil)

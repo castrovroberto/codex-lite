@@ -5,7 +5,7 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/castrovroberto/CGE)
 
-**Codex-GPT-Engineer (CGE): Your AI-powered partner for engineering complex software projects.** CGE is evolving from `CGE` into a sophisticated command-line tool that leverages LLMs (via Ollama or OpenAI) to assist with project planning, code generation, automated reviews, and knowledge graph integration.
+**Codex-GPT-Engineer (CGE): Your AI-powered partner for engineering complex software projects.** CGE is a sophisticated command-line tool that leverages LLMs (via Ollama or OpenAI) to assist with project planning, code generation, automated reviews, and iterative development workflows.
 
 **Note:** This project is currently undergoing a significant refactoring from its `CGE` origins to the new CGE architecture. Some features described may be in development.
 
@@ -21,71 +21,94 @@
     *   [Installation](#installation)
     *   [Configuration](#configuration)
 5.  [Usage](#5-usage)
-    *   [Analyze Command](#analyze-command)
+    *   [Plan Command](#plan-command)
+    *   [Generate Command](#generate-command)
+    *   [Review Command](#review-command)
     *   [Chat Command](#chat-command)
-6.  [Docker](#6-docker)
+6.  [Workflow Examples](#6-workflow-examples)
+7.  [Docker](#7-docker)
     *   [Building the Docker Image](#building-the-docker-image)
     *   [Running with Docker](#running-with-docker)
-7.  [Contributing](#7-contributing)
-8.  [License](#8-license)
-9.  [Acknowledgements](#8-acknowledgements)
+8.  [Contributing](#8-contributing)
+9.  [License](#9-license)
+10. [Acknowledgements](#10-acknowledgements)
 
 ---
 
 ## **1️⃣ Overview**
 
-**Codex-GPT-Engineer (CGE)** is a versatile CLI tool designed to enhance your software engineering workflow. It integrates with Large Language Models (LLMs) like those accessible via Ollama and OpenAI to:
-*   **Plan Projects:** Generate comprehensive development plans based on your requirements.
-*   **Generate Code:** Create new files or modify existing ones based on the generated plan.
-*   **Automated Review & Iteration:** Validate generated code using tests and linters, and iteratively refine it with LLM assistance.
-*   **Knowledge Graph Memory (KGM):** Leverage a knowledge graph to provide deeper context and memory to the LLM over time.
-*   **(Future) TUI:** Offer an intuitive Terminal User Interface for managing the CGE workflow.
+**Codex-GPT-Engineer (CGE)** is a versatile CLI tool designed to enhance your software engineering workflow through AI-powered assistance. It integrates with Large Language Models (LLMs) like those accessible via Ollama and OpenAI to provide:
 
-The tool is built using Go. Configuration is managed via `codex.toml`, environment variables, and command-line flags.
+*   **🎯 Intelligent Project Planning:** Generate comprehensive development plans based on your requirements and existing codebase context
+*   **⚡ Automated Code Generation:** Create new files or modify existing ones based on generated plans
+*   **🔍 Automated Review & Iteration:** Validate generated code using tests and linters, and iteratively refine it with LLM assistance
+*   **💬 Interactive Chat:** Get real-time coding assistance and explanations
+*   **🧠 Context-Aware Analysis:** Deep understanding of your codebase structure, dependencies, and Git history
+
+The tool is built using Go and provides a modern CLI experience with comprehensive configuration options.
 
 ---
 
 ## **2️⃣ Key Features**
 
--   **LLM-Driven Project Planning:** Generates structured `plan.json` from high-level goals.
--   **Automated Code Generation & Modification:** Applies changes based on the plan, with support for dry-runs and diffs.
--   **Interactive Review Loop:** Executes tests/linters, feeds results back to LLM for corrections.
--   **Knowledge Graph Memory (KGM):** (Upcoming) Stores and retrieves project context using a graph database.
--   **Multi-Provider LLM Support:**
-    -   Ollama for local models.
-    -   OpenAI for access to powerful cloud models (with budget tracking).
--   **Flexible Configuration:**
-    -   TOML configuration file (`codex.toml`).
-    -   Environment variables (prefixed with `CGE_`).
-    -   Command-line flags for overriding settings.
--   **Built with Go:** Efficient and portable.
--   **Evolving CLI:** Commands being refactored to `plan`, `generate`, `diff`, `review`, `run`, `kg query`.
--   **(Future) Rich TUI:** For an enhanced user experience.
+### **🎯 Enhanced Planning**
+- **Real Codebase Context:** Analyzes your actual project structure, dependencies, and Git history
+- **Structured JSON Plans:** Generates detailed, actionable development plans with task dependencies
+- **Effort Estimation:** Provides realistic time estimates for each task
+- **Risk Assessment:** Identifies potential challenges and considerations
+
+### **⚡ Code Generation**
+- **Plan-Driven Development:** Executes tasks from generated plans in proper dependency order
+- **Multiple Modes:** Dry-run preview, direct application, or output to files
+- **Task Filtering:** Process specific tasks or subsets of the plan
+- **Context-Aware Generation:** Uses project context for consistent code style
+
+### **🔍 Automated Review**
+- **Test Integration:** Runs your test suite and analyzes failures
+- **Linting Support:** Integrates with code linters for quality checks
+- **Iterative Improvement:** Uses LLM to suggest and apply fixes automatically
+- **Configurable Cycles:** Set maximum review iterations to prevent infinite loops
+
+### **💬 Interactive Features**
+- **Real-time Chat:** Interactive coding assistance with project context
+- **Tool Integration:** Access to codebase analysis, Git operations, and file reading
+- **Multi-Provider Support:** Works with Ollama (local) and OpenAI (cloud) models
+
+### **🛠️ Developer Experience**
+- **Flexible Configuration:** TOML files, environment variables, and CLI flags
+- **Rich Logging:** Detailed logging with configurable levels
+- **Template System:** Customizable prompts for different use cases
+- **Cross-Platform:** Works on macOS, Linux, and Windows
 
 ---
 
 ## **3️⃣ Project Structure 📁**
 
 ```bash
-📂 cge/ (formerly CGE)
-┣ 📂 cmd/                   # Cobra command definitions (e.g., plan, generate, review)
-┣ 📂 internal/               # Core application logic
-┃ ┣ 📂 config/             # Configuration loading (Viper, codex.toml)
-┃ ┣ 📂 llm/                # LLM client interfaces and implementations (Ollama, OpenAI)
-┃ ┣ 📂 kgm/                # Knowledge Graph Memory client and logic (Upcoming)
-┃ ┣ 📂 contextkeys/        # Keys for context values
-┃ ┣ 📂 logger/             # Logging setup
-┃ ┣ 📂 scanner/            # File system scanning logic
-┃ ┗ 📂 tui/                # Bubble Tea components for TUI (To be adapted)
-// ... (other CGE-specific internal packages as they are developed, e.g., planner, generator, reviewer)
-┣ 📄 codex.toml             # Main configuration file (TOML format)
-┣ 📄 .gitignore              # Git ignore rules
-┣ 📄 Dockerfile              # For building Docker container (To be reviewed/updated)
-┣ 📄 .dockerignore           # Specifies files to exclude from Docker build context
+📂 cge/
+┣ 📂 cmd/                   # Cobra command definitions
+┃ ┣ 📄 plan.go             # Plan generation command
+┃ ┣ 📄 generate.go         # Code generation command  
+┃ ┣ 📄 review.go           # Code review command
+┃ ┣ 📄 chat.go             # Interactive chat command
+┃ ┗ 📄 root.go             # Root command and CLI setup
+┣ 📂 internal/              # Core application logic
+┃ ┣ 📂 config/             # Configuration management
+┃ ┣ 📂 llm/                # LLM client interfaces (Ollama, OpenAI)
+┃ ┣ 📂 templates/          # Prompt template engine
+┃ ┣ 📂 context/            # Codebase context gathering
+┃ ┣ 📂 scanner/            # File system scanning
+┃ ┣ 📂 analyzer/           # Code analysis (complexity, dependencies, security)
+┃ ┣ 📂 agent/              # Tool system for LLM interactions
+┃ ┣ 📂 contextkeys/        # Context value keys
+┃ ┣ 📂 logger/             # Structured logging
+┃ ┗ 📂 tui/                # Terminal UI components
+┣ 📂 prompts/               # LLM prompt templates
+┃ ┣ 📄 plan.tmpl           # Planning prompt template
+┃ ┗ 📄 generate.tmpl       # Code generation template
+┣ 📄 codex.toml             # Main configuration file
 ┣ 📄 go.mod                 # Go module definition
-┣ 📄 go.sum                 # Go module checksums
-┣ 📄 LICENSE                # Project license
-┣ 📄 main.go                # Main application entry point
+┣ 📄 main.go                # Application entry point
 ┗ 📄 README.md              # This file
 ```
 
@@ -95,206 +118,301 @@ The tool is built using Go. Configuration is managed via `codex.toml`, environme
 
 ### **🔹 Prerequisites**
 
--   **Go:** Version 1.23 or higher (see `go.mod` for the exact version).
+-   **Go:** Version 1.23 or higher
 -   **LLM Provider:**
-    -   **Ollama:** A running Ollama instance with your desired models pulled (e.g., `ollama pull llama3`). Get it from [ollama.com](https://ollama.com/).
-    -   **OpenAI:** (Optional) An OpenAI API key if you plan to use OpenAI models.
--   **(Optional) Docker:** If you plan to use the Docker image.
+    -   **Ollama:** Local LLM server with models (recommended: `deepseek-coder-v2:16b`)
+    -   **OpenAI:** API key for cloud models (optional)
+-   **Development Tools:** Your preferred test runner and linter
 
 ### **🔹 Installation**
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/castrovroberto/CGE.git cge # Consider renaming the directory
-    cd cge
+    git clone https://github.com/castrovroberto/CGE.git
+    cd CGE
     ```
 
-2.  **Build the binary (example name `cge`):**
+2.  **Quick setup (recommended):**
+    ```bash
+    ./scripts/quick-start.sh
+    ```
+
+3.  **Manual build:**
     ```bash
     go build -o cge main.go
     ```
-    This will create an executable `cge` in the current directory. You can move this to a directory in your `PATH`.
 
-    Alternatively, you can install directly using `go install` (ensure your `go.mod` reflects the new project name if it changes):
+4.  **Install globally (optional):**
     ```bash
-    # If module path is updated in go.mod, use that path here
-    # go install github.com/your-username/cge@latest
+    go install
     ```
 
 ### **🔹 Configuration**
 
-CGE can be configured in three ways (in order of precedence: flags > env vars > config file):
+Create a `codex.toml` file in your project root or home directory:
 
-1.  **Configuration File (`codex.toml`):**
-    Create a TOML file named `codex.toml` in your home directory (`~/.cge/codex.toml` or `~/.codex.toml`) or the current project directory (`./codex.toml`).
-    An example `codex.toml` is provided in the repository.
+```toml
+version = "0.1.0"
 
-    Example `codex.toml` (refer to the actual `codex.toml` in the repo for more details):
-    ```toml
-    version = "0.1.0"
+[llm]
+  provider = "ollama"  # "ollama" or "openai"
+  model = "deepseek-coder-v2:16b"
+  ollama_host_url = "http://localhost:11434"
+  # For OpenAI: set OPENAI_API_KEY environment variable
 
-    [llm]
-      provider = "ollama"  # "ollama" or "openai"
-      model = "llama3"
-      # request_timeout_seconds = "300s"
+[project]
+  workspace_root = "."
+  # default_ignore_dirs = [".git", "node_modules", "vendor"]
+  # default_source_extensions = [".go", ".py", ".js", ".ts"]
 
-    [logging]
-      level = "info"
-    ```
+[logging]
+  level = "info"  # "debug", "info", "warn", "error"
 
-2.  **Environment Variables:**
-    Set environment variables prefixed with `CGE_`. For nested keys in `codex.toml`, use an underscore (e.g., `CGE_LLM_PROVIDER`).
-    Example:
-    ```bash
-    export CGE_LLM_PROVIDER="openai"
-    export CGE_LLM_MODEL="gpt-4-turbo"
-    export OPENAI_API_KEY="your_openai_api_key" # Note: OPENAI_API_KEY is a special case
-    export CGE_LOGGING_LEVEL="debug"
-    ```
-
-3.  **Command-line Flags:**
-    Many configuration options can be overridden directly via command-line flags. See `cge --help` and help for specific subcommands (e.g., `cge plan --help`).
-
-    Persistent flags (apply to all commands - to be updated as CGE evolves):
-    *   `--config FILE_PATH`: Path to the `codex.toml` configuration file.
-    *   `--llm-provider PROVIDER_NAME`: (Example) LLM Provider (ollama, openai).
-    *   `--llm-model MODEL_NAME`: (Example) LLM model.
+[commands.review]
+  test_command = "go test ./..."
+  lint_command = "golangci-lint run"
+  max_cycles = 3
+```
 
 ---
 
 ## **5️⃣ Usage**
 
-Ensure your chosen LLM provider (Ollama or OpenAI) is configured and running.
+### **🎯 Plan Command**
 
-**Note:** The commands below reflect the target CGE structure and are under development.
+Generate intelligent development plans based on your goals and codebase context:
 
-### **`plan` Command**
-Generates a `plan.json` file detailing the steps to achieve a given software development goal.
 ```bash
-cge plan --goal "Refactor the authentication module to use JWT"
+# Basic planning
+./cge plan "Add user authentication with JWT tokens"
+
+# Custom output file
+./cge plan "Refactor database layer" --output refactor-plan.json
+
+# The plan command analyzes:
+# - Current codebase structure and dependencies
+# - Git repository status and history  
+# - File organization and patterns
+# - Existing code complexity and style
 ```
 
-### **`generate` Command**
-Reads `plan.json` and interacts with the LLM to generate or modify code.
-```bash
-cge generate
-cge generate --dry-run # To see proposed changes
+**Example Plan Output:**
+```json
+{
+  "overall_goal": "Add user authentication with JWT tokens",
+  "tasks": [
+    {
+      "id": "task_1",
+      "description": "Create JWT utility functions",
+      "files_to_create": ["internal/auth/jwt.go"],
+      "estimated_effort": "small",
+      "dependencies": [],
+      "rationale": "Foundation for JWT token handling"
+    },
+    {
+      "id": "task_2", 
+      "description": "Implement authentication middleware",
+      "files_to_create": ["internal/middleware/auth.go"],
+      "files_to_modify": ["cmd/root.go"],
+      "estimated_effort": "medium",
+      "dependencies": ["task_1"],
+      "rationale": "Middleware to protect routes"
+    }
+  ],
+  "summary": "Implementation plan for JWT authentication system",
+  "estimated_total_effort": "medium",
+  "risks_and_considerations": [
+    "Ensure secure JWT secret management",
+    "Consider token refresh strategy"
+  ]
+}
 ```
 
-### **`diff` Command**
-Shows differences and allows interactive application of generated patches.
+### **⚡ Generate Command**
+
+Execute development plans with AI-powered code generation:
+
 ```bash
-cge diff
+# Dry run (preview changes)
+./cge generate --plan plan.json --dry-run
+
+# Apply changes directly
+./cge generate --plan plan.json --apply
+
+# Save changes to directory
+./cge generate --plan plan.json --output-dir ./generated
+
+# Process specific tasks
+./cge generate --plan plan.json --task auth --dry-run
 ```
 
-### **`review` Command**
-Executes tests/linters, feeds results back to LLM for patch revisions.
+**Features:**
+- **Dependency Resolution:** Executes tasks in proper order
+- **Context-Aware:** Uses existing code patterns and style
+- **Safe Execution:** Dry-run mode for preview
+- **Selective Processing:** Filter tasks by name or ID
+
+### **🔍 Review Command**
+
+Validate and improve generated code through automated testing and linting:
+
 ```bash
-cge review
+# Basic review with configured commands
+./cge review
+
+# Custom test and lint commands
+./cge review --test-cmd "go test ./..." --lint-cmd "golangci-lint run"
+
+# Auto-fix issues with LLM assistance
+./cge review --auto-fix --max-cycles 3
+
+# Review specific directory
+./cge review ./src --auto-fix
 ```
 
-### **(Legacy) `chat` Command**
-The `chat` command from `CGE` may be retained or adapted.
-```bash
-cge chat
-```
+**Review Process:**
+1. **Test Execution:** Runs your test suite
+2. **Linting:** Checks code quality and style
+3. **Issue Analysis:** Identifies failures and problems
+4. **LLM Fixes:** Suggests and applies improvements
+5. **Iteration:** Repeats until all issues resolved or max cycles reached
 
-Run `cge <command> --help` for all options.
+### **💬 Chat Command**
+
+Interactive coding assistance with full project context:
+
+```bash
+# Start interactive chat
+./cge chat
+
+# Example interactions:
+# > "Explain the authentication flow in this codebase"
+# > "How can I optimize the database queries in user.go?"
+# > "Show me the Git history for the auth module"
+```
 
 ---
 
-## **6️⃣ Docker**
+## **6️⃣ Examples and Tutorials**
 
-You can build and run Codex Lite as a Docker container. This is useful for isolated environments or consistent deployments.
+📁 **Check out the [examples/](examples/) directory for detailed usage scenarios, best practices, and configuration examples for different project types.**
+
+## **6️⃣ Workflow Examples**
+
+### **Complete Feature Development**
+
+```bash
+# 1. Plan the feature
+./cge plan "Add rate limiting to API endpoints" --output rate-limit-plan.json
+
+# 2. Review the plan
+cat rate-limit-plan.json
+
+# 3. Generate code (dry run first)
+./cge generate --plan rate-limit-plan.json --dry-run
+
+# 4. Apply the changes
+./cge generate --plan rate-limit-plan.json --apply
+
+# 5. Review and fix issues
+./cge review --auto-fix --max-cycles 3
+
+# 6. Interactive refinement
+./cge chat
+# > "The rate limiting tests are failing, can you help debug?"
+```
+
+### **Code Quality Improvement**
+
+```bash
+# 1. Plan refactoring
+./cge plan "Improve error handling across the codebase" --output error-handling-plan.json
+
+# 2. Generate improvements
+./cge generate --plan error-handling-plan.json --apply
+
+# 3. Automated review and fixes
+./cge review --auto-fix --test-cmd "go test ./..." --lint-cmd "golangci-lint run"
+```
+
+### **Legacy Code Analysis**
+
+```bash
+# 1. Analyze existing codebase
+./cge plan "Document and refactor the legacy user module" --output legacy-analysis.json
+
+# 2. Interactive exploration
+./cge chat
+# > "Analyze the complexity of the user module"
+# > "What are the main dependencies in this codebase?"
+# > "Suggest improvements for the authentication code"
+```
+
+---
+
+## **7️⃣ Docker**
 
 ### **Building the Docker Image**
 
-Ensure you have Docker installed. From the root of the project directory (where the `Dockerfile` is located):
 ```bash
-docker build -t cge-app .
+docker build -t cge:latest .
 ```
-You can tag the image differently if you prefer (e.g., `yourusername/CGE:latest`).
 
 ### **Running with Docker**
 
-When running Codex Lite in Docker, you need to ensure it can communicate with your Ollama instance.
+```bash
+# Mount your project directory
+docker run -v $(pwd):/workspace -w /workspace cge:latest plan "Add logging to API"
 
-**1. If Ollama is running on your host machine:**
-   You often need to use `host.docker.internal` to refer to your host machine from within the Docker container, or use host networking.
-
-   **Using `host.docker.internal` (recommended for Mac/Windows Docker Desktop):**
-   ```bash
-   docker run -it --rm \
-     cge-app \
-     --ollama-host-url="http://host.docker.internal:11434" chat --model your_model
-   ```
-   Replace `your_model` with a model you have pulled in Ollama.
-
-   **Using host networking (Linux):**
-   This makes the container share the host's network stack.
-   ```bash
-   docker run -it --rm --network="host" \
-     cge-app \
-     chat --model your_model
-   ```
-   If using host networking, `CGE` inside the container can usually connect to `http://localhost:11434` if Ollama is listening on all interfaces or on `localhost` on the host. You might still need to pass `--ollama-host-url="http://localhost:11434"` if the default in the app or its config doesn't align.
-
-**2. Mounting local configuration and history (optional but recommended for persistence):**
-   To persist chat history and use a local configuration file:
-   ```bash
-   # Create directories on host if they don't exist
-   mkdir -p $HOME/.cge/chat_history
-   # Ensure your .cge.yaml is in $HOME/.cge.yaml or provide its path
-
-   docker run -it --rm \
-     -v "$HOME/.cge:/home/appuser/.cge" \
-     cge-app \
-     --config="/home/appuser/.cge/.cge.yaml" \
-     --ollama-host-url="http://host.docker.internal:11434" \
-     chat
-   ```
-   *Note:* The `Dockerfile` creates a non-root user `appuser`. The application looks for config in `$HOME/.cge.yaml` which inside the container for `appuser` is `/home/appuser/.cge.yaml`.
-
-**3. Analyzing local files:**
-   To analyze files from your host machine, you need to mount the relevant directory into the container.
-   ```bash
-   docker run -it --rm \
-     -v "$(pwd):/src" \
-     -w /src \
-     cge-app \
-     --ollama-host-url="http://host.docker.internal:11434" \
-     analyze "your_file.go"
-   ```
-   This mounts the current host directory (`$(pwd)`) to `/src` inside the container and sets `/src` as the working directory.
-
-**Important Considerations for Docker:**
-*   **Ollama Accessibility:** The most common issue is the Docker container not being able to reach Ollama. Ensure your Ollama instance is configured to accept connections from the Docker container's IP or from `host.docker.internal`. If Ollama is also in Docker, they might need to be on the same Docker network.
-*   **Models:** The LLM models themselves reside within your Ollama instance, not in the `cge-app` Docker image.
+# Interactive mode
+docker run -it -v $(pwd):/workspace -w /workspace cge:latest chat
+```
 
 ---
 
-## **7️⃣ Contributing**
+## **8️⃣ Contributing**
 
-Contributions are welcome! If you'd like to contribute:
-1.  Fork the Project (`https://github.com/castrovroberto/CGE/fork`)
-2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4.  Push to the Branch (`git push origin feature/AmazingFeature`)
-5.  Open a Pull Request
+We welcome contributions! Please see our contributing guidelines:
 
-Please ensure your code adheres to Go best practices and that tests pass. Adding new tests for new features is highly encouraged.
+1. **Fork the repository**
+2. **Create a feature branch:** `git checkout -b feature/amazing-feature`
+3. **Make your changes** and add tests
+4. **Run the review process:** `./cge review --auto-fix`
+5. **Commit your changes:** `git commit -m 'Add amazing feature'`
+6. **Push to the branch:** `git push origin feature/amazing-feature`
+7. **Open a Pull Request**
+
+### **Development Setup**
+
+```bash
+# Install dependencies
+go mod download
+
+# Run tests
+go test ./...
+
+# Build and test
+go build -o cge main.go
+./cge plan "Test the development setup" --output test-plan.json
+```
 
 ---
 
-## **8️⃣ License**
+## **9️⃣ License**
 
-Distributed under the **MIT License**. See `LICENSE` for more information.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## **9️⃣ Acknowledgements**
+## **🔟 Acknowledgements**
 
-*   **Ollama Team:** For making local LLM hosting accessible.
-*   **Charmbracelet Team:** For `bubbletea`, `lipgloss`, and other fantastic TUI libraries.
-*   **spf13:** For `cobra` and `viper`.
+- **Ollama** for providing excellent local LLM infrastructure
+- **Cobra** for the powerful CLI framework
+- **Viper** for flexible configuration management
+- **Bubble Tea** for the interactive terminal UI components
+- The **Go community** for excellent tooling and libraries
+
+---
+
+**Ready to supercharge your development workflow? Get started with CGE today!** 🚀
 

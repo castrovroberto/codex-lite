@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,6 +22,8 @@ var (
 	lintCommand     string
 	maxCycles       int
 	autoFix         bool
+	previewFixes    bool
+	applyFixes      bool
 )
 
 // ReviewResult represents the result of a review cycle
@@ -109,6 +112,10 @@ Example:
 		promptsDir := filepath.Join(workspaceRoot, "prompts")
 		templateEngine := templates.NewEngine(promptsDir)
 
+		// Track previous issues to detect infinite loops
+		var previousIssues []string
+		noProgressCount := 0
+
 		// Run review cycles
 		for cycle := 1; cycle <= maxCycles; cycle++ {
 			logger.Info("Starting review cycle", "cycle", cycle, "max_cycles", maxCycles)
@@ -137,6 +144,20 @@ Example:
 				}
 				break
 			}
+
+			// Check for infinite loop (same issues repeating)
+			currentIssues := strings.Join(result.Issues, "|")
+			if len(previousIssues) > 0 && previousIssues[len(previousIssues)-1] == currentIssues {
+				noProgressCount++
+				if noProgressCount >= 2 {
+					logger.Warn("No progress detected, stopping review cycles", "cycle", cycle)
+					fmt.Printf("⚠️  No progress detected after %d attempts. Stopping review cycles.\n", noProgressCount)
+					break
+				}
+			} else {
+				noProgressCount = 0
+			}
+			previousIssues = append(previousIssues, currentIssues)
 
 			// Apply fixes using LLM
 			logger.Info("Attempting to fix issues with LLM", "cycle", cycle)
@@ -251,19 +272,135 @@ func printReviewResults(result *ReviewResult, cycle int) {
 
 // applyLLMFixes uses the LLM to suggest and apply fixes for the identified issues
 func applyLLMFixes(ctx context.Context, result *ReviewResult, llmClient llm.Client, templateEngine *templates.Engine, targetDir string, cfg interface{}, logger interface{}) error {
-	// This is a placeholder for LLM-based fix generation
-	// In a real implementation, you would:
-	// 1. Create a prompt with the test/lint failures
-	// 2. Ask the LLM to suggest fixes
-	// 3. Parse the LLM response to extract code changes
-	// 4. Apply the changes to the files
-	// 5. Update result.FixesApplied
+	fmt.Printf("🤖 Analyzing issues with LLM...\n")
 
-	fmt.Printf("🤖 LLM-based auto-fix not yet implemented\n")
-	fmt.Printf("   Would analyze: %d issues\n", len(result.Issues))
+	// 1. Gather relevant file contents for files that might need fixing
+	fileContents := make(map[string]string)
 
-	// For now, just add a placeholder fix
-	result.FixesApplied = append(result.FixesApplied, "Placeholder: LLM analysis completed")
+	// Look for Go files in the target directory (this could be made more sophisticated)
+	err := filepath.Walk(targetDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Only include relevant source files
+		if strings.HasSuffix(path, ".go") && !strings.Contains(path, "vendor/") {
+			relPath, _ := filepath.Rel(targetDir, path)
+			if content, readErr := os.ReadFile(path); readErr == nil {
+				fileContents[relPath] = string(content)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to gather file contents: %w", err)
+	}
+
+	// 2. Prepare template data for the review prompt
+	templateData := templates.ReviewTemplateData{
+		TestOutput:     result.TestOutput,
+		LintOutput:     result.LintOutput,
+		Issues:         result.Issues,
+		TargetDir:      targetDir,
+		FileContents:   fileContents,
+		ProjectContext: fmt.Sprintf("Target directory: %s", targetDir),
+	}
+
+	// 3. Render the review template
+	fullPrompt, err := templateEngine.Render("review.tmpl", templateData)
+	if err != nil {
+		return fmt.Errorf("failed to render review template: %w", err)
+	}
+
+	// 4. Call LLM to analyze and suggest fixes
+	systemPrompt := "You are an expert software engineer and debugging specialist. Analyze the failures and provide precise fixes in JSON format."
+
+	// Get model from config (with fallback)
+	model := "llama3.2" // Default model
+	if cfgMap, ok := cfg.(map[string]interface{}); ok {
+		if llmCfg, exists := cfgMap["LLM"]; exists {
+			if llmMap, ok := llmCfg.(map[string]interface{}); ok {
+				if modelVal, exists := llmMap["Model"]; exists {
+					if modelStr, ok := modelVal.(string); ok {
+						model = modelStr
+					}
+				}
+			}
+		}
+	}
+
+	llmResponse, err := llmClient.Generate(ctx, model, fullPrompt, systemPrompt, nil)
+	if err != nil {
+		return fmt.Errorf("LLM generation failed: %w", err)
+	}
+
+	// 5. Parse LLM response
+	var response struct {
+		Fixes []struct {
+			FilePath       string   `json:"file_path"`
+			Action         string   `json:"action"`
+			Content        string   `json:"content"`
+			Reason         string   `json:"reason"`
+			IssuesResolved []string `json:"issues_resolved"`
+		} `json:"fixes"`
+		Analysis struct {
+			RootCauses               []string `json:"root_causes"`
+			RiskAssessment           string   `json:"risk_assessment"`
+			AdditionalConsiderations []string `json:"additional_considerations"`
+		} `json:"analysis"`
+		Summary string `json:"summary"`
+	}
+
+	if err := json.Unmarshal([]byte(llmResponse), &response); err != nil {
+		// Save raw response for debugging
+		rawPath := "failed_review_fixes_raw.txt"
+		_ = os.WriteFile(rawPath, []byte(llmResponse), 0644)
+		fmt.Printf("⚠️  Failed to parse LLM response. Raw response saved to %s\n", rawPath)
+		return fmt.Errorf("failed to parse LLM JSON response: %w", err)
+	}
+
+	// 6. Apply the suggested fixes
+	if len(response.Fixes) == 0 {
+		fmt.Printf("🤖 No fixes suggested by LLM\n")
+		return nil
+	}
+
+	fmt.Printf("🔧 Applying %d fixes suggested by LLM...\n", len(response.Fixes))
+
+	for _, fix := range response.Fixes {
+		if fix.Action == "modify" {
+			fullPath := filepath.Join(targetDir, fix.FilePath)
+
+			// Create backup
+			backupPath := fullPath + ".backup"
+			if originalContent, err := os.ReadFile(fullPath); err == nil {
+				_ = os.WriteFile(backupPath, originalContent, 0644)
+			}
+
+			// Apply fix
+			if err := os.WriteFile(fullPath, []byte(fix.Content), 0644); err != nil {
+				fmt.Printf("❌ Failed to apply fix to %s: %v\n", fix.FilePath, err)
+				continue
+			}
+
+			fmt.Printf("✅ Applied fix to %s: %s\n", fix.FilePath, fix.Reason)
+			result.FixesApplied = append(result.FixesApplied, fmt.Sprintf("%s: %s", fix.FilePath, fix.Reason))
+		}
+	}
+
+	// 7. Print analysis summary
+	if response.Summary != "" {
+		fmt.Printf("\n📋 LLM Analysis Summary: %s\n", response.Summary)
+	}
+
+	if len(response.Analysis.RootCauses) > 0 {
+		fmt.Printf("🔍 Root causes identified:\n")
+		for _, cause := range response.Analysis.RootCauses {
+			fmt.Printf("  - %s\n", cause)
+		}
+	}
 
 	return nil
 }
@@ -276,4 +413,9 @@ func init() {
 	reviewCmd.Flags().StringVar(&lintCommand, "lint-cmd", "", "Command to run linter (overrides config)")
 	reviewCmd.Flags().IntVar(&maxCycles, "max-cycles", 0, "Maximum number of review cycles (overrides config)")
 	reviewCmd.Flags().BoolVar(&autoFix, "auto-fix", false, "Automatically attempt to fix issues using LLM")
+	reviewCmd.Flags().BoolVar(&previewFixes, "preview", false, "Show fixes only without applying them")
+	reviewCmd.Flags().BoolVar(&applyFixes, "apply", false, "Auto-apply fixes without review")
+
+	// Make the flags mutually exclusive
+	reviewCmd.MarkFlagsMutuallyExclusive("auto-fix", "preview", "apply")
 }

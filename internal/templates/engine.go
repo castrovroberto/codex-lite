@@ -53,3 +53,27 @@ type PlanTemplateData struct {
 	FileStructure   string
 	Dependencies    string
 }
+
+// GenerateTemplateData holds data for the generate template
+type GenerateTemplateData struct {
+	TaskID              string
+	TaskDescription     string
+	EstimatedEffort     string
+	Rationale           string
+	OverallGoal         string
+	FilesToModify       []string
+	FilesToCreate       []string
+	FilesToDelete       []string
+	CurrentFileContents string
+	ProjectContext      string
+}
+
+// ReviewTemplateData holds data for the review template
+type ReviewTemplateData struct {
+	TestOutput     string
+	LintOutput     string
+	Issues         []string
+	TargetDir      string
+	FileContents   map[string]string
+	ProjectContext string
+}

@@ -148,6 +148,12 @@ Example:
 			generatedPlan.OverallGoal = userGoal
 		}
 
+		// Validate the generated plan
+		if err := validatePlan(&generatedPlan); err != nil {
+			logger.Error("Generated plan failed validation", "error", err)
+			return fmt.Errorf("generated plan is invalid: %w", err)
+		}
+
 		// 5. Output plan.json
 		planJSON, err := json.MarshalIndent(generatedPlan, "", "  ")
 		if err != nil {
@@ -164,6 +170,53 @@ Example:
 		fmt.Printf("Plan generated and saved to %s\n", outputFilePlan)
 		return nil
 	},
+}
+
+// validatePlan performs sanity checks on the generated plan
+func validatePlan(plan *Plan) error {
+	if plan.OverallGoal == "" {
+		return fmt.Errorf("plan must have an overall goal")
+	}
+
+	if len(plan.Tasks) == 0 {
+		return fmt.Errorf("plan must contain at least one task")
+	}
+
+	// Check each task
+	taskIDs := make(map[string]bool)
+	for i, task := range plan.Tasks {
+		if task.ID == "" {
+			return fmt.Errorf("task %d must have a non-empty ID", i+1)
+		}
+
+		if taskIDs[task.ID] {
+			return fmt.Errorf("duplicate task ID: %s", task.ID)
+		}
+		taskIDs[task.ID] = true
+
+		if task.Description == "" {
+			return fmt.Errorf("task %s must have a description", task.ID)
+		}
+
+		// Validate effort levels
+		if task.EstimatedEffort != "" {
+			validEfforts := map[string]bool{"small": true, "medium": true, "large": true}
+			if !validEfforts[task.EstimatedEffort] {
+				return fmt.Errorf("task %s has invalid effort level: %s (must be small, medium, or large)", task.ID, task.EstimatedEffort)
+			}
+		}
+	}
+
+	// Validate dependencies exist
+	for _, task := range plan.Tasks {
+		for _, dep := range task.Dependencies {
+			if !taskIDs[dep] {
+				return fmt.Errorf("task %s depends on non-existent task: %s", task.ID, dep)
+			}
+		}
+	}
+
+	return nil
 }
 
 func init() {

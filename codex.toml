@@ -29,4 +29,23 @@ version = "0.1.0"
   [commands.review]
     test_command = "go test ./..."
     lint_command = "golangci-lint run"
-    max_cycles = 3 
+    max_cycles = 3
+  
+  [commands.automated_workflow]
+    # Auto-commit settings
+    auto_commit_enabled = false
+    auto_commit_message_template = "chore: automated changes from CGE"
+    auto_commit_on_success = false
+    
+    # Commit message conventions
+    use_conventional_commits = true
+    default_commit_type = "feat"
+    
+    # Rollback settings
+    create_backups = true
+    backup_retention_days = 7
+    auto_rollback_on_failure = true
+    
+    # Audit settings
+    audit_enabled = true
+    audit_retention_days = 30 

@@ -2,6 +2,7 @@ package templates
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,6 +44,46 @@ func (e *Engine) Render(templateName string, data interface{}) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+// RenderWithTools renders a template with tool definitions included
+func (e *Engine) RenderWithTools(templateName string, data interface{}, tools []ToolDefinition) (string, error) {
+	// Create enhanced data structure that includes tools
+	enhancedData := FunctionCallingTemplateData{
+		BaseData:         data,
+		AvailableTools:   tools,
+		SafetyGuidelines: SafetyGuidelines(),
+	}
+
+	return e.Render(templateName, enhancedData)
+}
+
+// RenderWithContext renders a template with additional context for function calling
+func (e *Engine) RenderWithContext(templateName string, data interface{}, workspaceRoot string, maxIterations int) (string, error) {
+	enhancedData := FunctionCallingTemplateData{
+		BaseData:         data,
+		WorkspaceRoot:    workspaceRoot,
+		MaxIterations:    maxIterations,
+		SafetyGuidelines: SafetyGuidelines(),
+	}
+
+	return e.Render(templateName, enhancedData)
+}
+
+// ToolDefinition represents a tool available for function calling
+type ToolDefinition struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+// FunctionCallingTemplateData holds enhanced data for function-calling templates
+type FunctionCallingTemplateData struct {
+	BaseData         interface{}      `json:"base_data"`
+	AvailableTools   []ToolDefinition `json:"available_tools,omitempty"`
+	MaxIterations    int              `json:"max_iterations,omitempty"`
+	WorkspaceRoot    string           `json:"workspace_root,omitempty"`
+	SafetyGuidelines []string         `json:"safety_guidelines,omitempty"`
 }
 
 // PlanTemplateData holds data for the plan template

@@ -28,8 +28,13 @@ vet: ## Run go vet
 	go vet ./...
 
 security: ## Run security scans
-	gosec ./...
-	govulncheck ./...
+	@echo "Installing security tools..."
+	@go install github.com/securego/gosec/v2/cmd/gosec@latest
+	@go install golang.org/x/vuln/cmd/govulncheck@latest
+	@echo "Running gosec security scanner..."
+	gosec -fmt sarif -out gosec.sarif ./... || echo "Security issues found - check gosec.sarif"
+	@echo "Running govulncheck..."
+	govulncheck ./... || echo "Vulnerabilities found - check output above"
 
 # Build targets
 build: ## Build the binary

@@ -336,6 +336,40 @@ func (oc *OllamaClient) ListAvailableModels(ctx context.Context) ([]string, erro
 	return modelNames, nil
 }
 
+// GenerateWithFunctions performs a generation request with function calling support for Ollama
+func (oc *OllamaClient) GenerateWithFunctions(ctx context.Context, modelName, prompt string, systemPrompt string, tools []ToolDefinition) (*FunctionCallResponse, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+
+	// Ollama doesn't have native function calling, so we embed tool definitions in the prompt
+	enhancedPrompt := prompt
+	if len(tools) > 0 {
+		enhancedPrompt = prompt + FormatToolCallForPrompt(tools)
+	}
+
+	// Use the existing Generate method
+	response, err := oc.Generate(ctx, modelName, enhancedPrompt, systemPrompt, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the response to see if it's a function call or text
+	functionCallResponse, parseErr := ParseFunctionCall(response)
+	if parseErr != nil {
+		log.Warn("Failed to parse function call response, treating as text", "error", parseErr)
+		return &FunctionCallResponse{
+			IsTextResponse: true,
+			TextContent:    response,
+		}, nil
+	}
+
+	return functionCallResponse, nil
+}
+
+// SupportsNativeFunctionCalling returns false for Ollama as it doesn't have native function calling
+func (oc *OllamaClient) SupportsNativeFunctionCalling() bool {
+	return false
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

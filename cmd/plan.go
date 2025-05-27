@@ -1,14 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/castrovroberto/CGE/internal/context"
+	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/config"
+	cgecontext "github.com/castrovroberto/CGE/internal/context"
 	"github.com/castrovroberto/CGE/internal/contextkeys"
 	"github.com/castrovroberto/CGE/internal/llm"
+	"github.com/castrovroberto/CGE/internal/orchestrator"
 	"github.com/castrovroberto/CGE/internal/templates"
 	"github.com/spf13/cobra"
 )
@@ -35,8 +39,9 @@ type Plan struct {
 }
 
 var (
-	userPromptPlan string
-	outputFilePlan string
+	userPromptPlan  string
+	outputFilePlan  string
+	useOrchestrator bool
 )
 
 // planCmd represents the plan command
@@ -62,7 +67,7 @@ Example:
 			return fmt.Errorf("the goal description cannot be empty")
 		}
 
-		logger.Info("Starting plan generation...", "goal", userGoal)
+		logger.Info("Starting plan generation...", "goal", userGoal, "use_orchestrator", useOrchestrator)
 
 		// 1. Instantiate LLM Client
 		var llmClient llm.Client
@@ -91,13 +96,19 @@ Example:
 		}
 
 		// Gather real codebase context
-		gatherer := context.NewGatherer(workspaceRoot)
+		gatherer := cgecontext.NewGatherer(workspaceRoot)
 		contextInfo, err := gatherer.GatherContext()
 		if err != nil {
 			logger.Error("Failed to gather codebase context", "error", err)
 			return fmt.Errorf("failed to gather codebase context: %w", err)
 		}
 		logger.Debug("Successfully gathered codebase context")
+
+		// 3. Plan Generation Logic - choose between orchestrator and template
+		if useOrchestrator {
+			logger.Info("Generating plan with orchestrator...")
+			return generatePlanWithOrchestrator(ctx, userGoal, contextInfo, llmClient, workspaceRoot, cfg, logger)
+		}
 
 		// 3. Plan Generation Logic using template
 		logger.Info("Generating plan with template...")
@@ -219,9 +230,81 @@ func validatePlan(plan *Plan) error {
 	return nil
 }
 
+// generatePlanWithOrchestrator uses the agent orchestrator to generate a plan
+func generatePlanWithOrchestrator(ctx context.Context, userGoal string, contextInfo interface{}, llmClient llm.Client, workspaceRoot string, cfg interface{}, logger interface{}) error {
+	// Initialize tool registry with planning tools
+	toolFactory := agent.NewToolFactory(workspaceRoot)
+	toolRegistry := toolFactory.CreatePlanningRegistry()
+
+	// Create command integrator and execute plan
+	integrator := orchestrator.NewCommandIntegrator(llmClient, toolRegistry, workspaceRoot)
+
+	planRequest := &orchestrator.PlanRequest{
+		UserGoal:        userGoal,
+		Model:           cfg.(*config.AppConfig).LLM.Model, // Type assertion needed
+		CodebaseContext: contextInfo,
+	}
+
+	planResponse, err := integrator.ExecutePlan(ctx, planRequest)
+	if err != nil {
+		return fmt.Errorf("orchestrated planning failed: %w", err)
+	}
+
+	if !planResponse.Success {
+		return fmt.Errorf("planning was not successful")
+	}
+
+	// Validate and save the plan
+	planJSON, err := json.MarshalIndent(planResponse.Plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal plan to JSON: %w", err)
+	}
+
+	// Validate the plan structure
+	var generatedPlan Plan
+	if err := json.Unmarshal(planJSON, &generatedPlan); err != nil {
+		// Save raw response for debugging
+		rawPlanPath := "failed_orchestrated_plan_raw_output.txt"
+		_ = os.WriteFile(rawPlanPath, planJSON, 0644)
+		return fmt.Errorf("generated plan has invalid structure: %w. Raw response saved to %s", err, rawPlanPath)
+	}
+
+	// Ensure the overall goal is set
+	if generatedPlan.OverallGoal == "" {
+		generatedPlan.OverallGoal = userGoal
+	}
+
+	// Validate the plan
+	if err := validatePlan(&generatedPlan); err != nil {
+		return fmt.Errorf("generated plan is invalid: %w", err)
+	}
+
+	// Re-marshal with any corrections
+	finalPlanJSON, err := json.MarshalIndent(generatedPlan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal final plan to JSON: %w", err)
+	}
+
+	// Save plan to file
+	if err := os.WriteFile(outputFilePlan, finalPlanJSON, 0644); err != nil {
+		return fmt.Errorf("failed to write plan to %s: %w", outputFilePlan, err)
+	}
+
+	// Save conversation history for debugging
+	historyPath := filepath.Join(filepath.Dir(outputFilePlan), "plan_conversation_history.json")
+	historyJSON, _ := json.MarshalIndent(planResponse.Messages, "", "  ")
+	_ = os.WriteFile(historyPath, historyJSON, 0644)
+
+	fmt.Printf("Orchestrated plan generated and saved to %s\n", outputFilePlan)
+	fmt.Printf("Conversation history saved to %s\n", historyPath)
+
+	return nil
+}
+
 func init() {
 	rootCmd.AddCommand(planCmd)
 	planCmd.Flags().StringVarP(&outputFilePlan, "output", "o", "plan.json", "Output file for the generated plan")
+	planCmd.Flags().BoolVar(&useOrchestrator, "use-orchestrator", false, "Use the agent orchestrator with function calling")
 	// We are taking the prompt as a positional arg now.
 	// planCmd.Flags().StringVarP(&userPromptPlan, "prompt", "p", "", "Your goal or task description (required)")
 	// planCmd.MarkFlagRequired("prompt")

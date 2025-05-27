@@ -58,8 +58,8 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
-	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
-	golang.org/x/net v0.33.0 // indirect
+	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
+	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/term v0.31.0 // indirect
 )
 
@@ -67,5 +67,6 @@ require github.com/alecthomas/chroma v0.10.0
 
 require (
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.1.0 // indirect
 )

@@ -64,3 +64,17 @@ func (r *Registry) List() []Tool {
 	}
 	return tools
 }
+
+// GetToolNames returns the names of all registered tools
+func (r *Registry) GetToolNames() []string {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	return names
+}
+
+// Count returns the number of registered tools
+func (r *Registry) Count() int {
+	return len(r.tools)
+}

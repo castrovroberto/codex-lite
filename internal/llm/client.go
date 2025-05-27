@@ -12,6 +12,10 @@ type Client interface {
 	//        The structure should be flexible to accommodate different provider schemas.
 	Generate(ctx context.Context, modelName, prompt string, systemPrompt string, tools []map[string]interface{}) (string, error)
 
+	// GenerateWithFunctions performs a generation request with function calling support.
+	// Returns a structured response that can be either text or a function call.
+	GenerateWithFunctions(ctx context.Context, modelName, prompt string, systemPrompt string, tools []ToolDefinition) (*FunctionCallResponse, error)
+
 	// Stream performs a streaming generation request.
 	// out: A channel to send generated text chunks to. The channel will be closed when generation is complete or an error occurs.
 	// Other parameters are the same as Generate.
@@ -19,6 +23,9 @@ type Client interface {
 
 	// ListAvailableModels retrieves a list of models available through the provider.
 	ListAvailableModels(ctx context.Context) ([]string, error)
+
+	// SupportsNativeFunctionCalling returns true if the provider supports native function calling
+	SupportsNativeFunctionCalling() bool
 
 	// TODO: Potentially add methods for token counting, specific model capabilities, etc.
 }

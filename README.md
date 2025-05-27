@@ -4,10 +4,12 @@
 <!-- <img src="path/to/your/logo.png" alt="CGE Logo" width="150" style="float: right;"> -->
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/castrovroberto/CGE)
+[![CI](https://github.com/castrovroberto/CGE/workflows/CI/badge.svg)](https://github.com/castrovroberto/CGE/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/castrovroberto/CGE)](https://goreportcard.com/report/github.com/castrovroberto/CGE)
 
 **Codex-GPT-Engineer (CGE): Your AI-powered partner for engineering complex software projects.** CGE is a sophisticated command-line tool that leverages LLMs (via Ollama or OpenAI) to assist with project planning, code generation, automated reviews, and iterative development workflows.
 
-**Note:** This project is currently undergoing a significant refactoring from its `CGE` origins to the new CGE architecture. Some features described may be in development.
+CGE features a comprehensive tool suite, robust testing infrastructure, and automated CI/CD pipelines to ensure reliable AI-assisted development workflows.
 
 ---
 
@@ -26,12 +28,13 @@
     *   [Review Command](#review-command)
     *   [Chat Command](#chat-command)
 6.  [Workflow Examples](#6-workflow-examples)
-7.  [Docker](#7-docker)
+7.  [Testing & Quality Assurance](#7-testing--quality-assurance)
+8.  [Docker](#8-docker)
     *   [Building the Docker Image](#building-the-docker-image)
     *   [Running with Docker](#running-with-docker)
-8.  [Contributing](#8-contributing)
-9.  [License](#9-license)
-10. [Acknowledgements](#10-acknowledgements)
+9.  [Contributing](#9-contributing)
+10. [License](#10-license)
+11. [Acknowledgements](#11-acknowledgements)
 
 ---
 
@@ -44,8 +47,11 @@
 *   **🔍 Automated Review & Iteration:** Validate generated code using tests and linters, and iteratively refine it with LLM assistance
 *   **💬 Interactive Chat:** Get real-time coding assistance and explanations
 *   **🧠 Context-Aware Analysis:** Deep understanding of your codebase structure, dependencies, and Git history
+*   **🛠️ Comprehensive Tool Suite:** 20+ specialized tools for file operations, code analysis, testing, and Git operations
+*   **🧪 Robust Testing Framework:** Comprehensive unit and integration tests with mock tool infrastructure
+*   **🚀 CI/CD Integration:** Automated testing, security scanning, and regression testing pipelines
 
-The tool is built using Go and provides a modern CLI experience with comprehensive configuration options.
+The tool is built using Go and provides a modern CLI experience with comprehensive configuration options and enterprise-grade reliability.
 
 ---
 
@@ -74,11 +80,27 @@ The tool is built using Go and provides a modern CLI experience with comprehensi
 - **Tool Integration:** Access to codebase analysis, Git operations, and file reading
 - **Multi-Provider Support:** Works with Ollama (local) and OpenAI (cloud) models
 
+### **🛠️ Comprehensive Tool Suite**
+- **File Operations:** Read, write, list directories with security safeguards
+- **Code Analysis:** Search, analyze complexity, retrieve context intelligently
+- **Testing & Quality:** Run tests, parse results, execute linters
+- **Git Integration:** Status, commits, history, and enhanced commit workflows
+- **Shell Operations:** Secure command execution with timeout controls
+- **Patch Management:** Apply diffs and patches with rollback capabilities
+
+### **🧪 Testing & Quality Assurance**
+- **Mock Tool Framework:** Configurable mock tools for testing with behavior simulation
+- **Integration Testing:** Comprehensive tool integration tests
+- **Security Testing:** Parameter validation and path traversal protection
+- **CI/CD Pipelines:** Automated testing across multiple platforms and Go versions
+- **Regression Testing:** Nightly regression tests to catch breaking changes
+
 ### **🛠️ Developer Experience**
 - **Flexible Configuration:** TOML files, environment variables, and CLI flags
 - **Rich Logging:** Detailed logging with configurable levels
 - **Template System:** Customizable prompts for different use cases
 - **Cross-Platform:** Works on macOS, Linux, and Windows
+- **Example Cookbooks:** Practical examples and tutorials for common use cases
 
 ---
 
@@ -100,9 +122,19 @@ The tool is built using Go and provides a modern CLI experience with comprehensi
 ┃ ┣ 📂 scanner/            # File system scanning
 ┃ ┣ 📂 analyzer/           # Code analysis (complexity, dependencies, security)
 ┃ ┣ 📂 agent/              # Tool system for LLM interactions
+┃ ┃ ┣ 📂 testing/          # Mock tools and test infrastructure
+┃ ┃ ┣ 📄 *_tool.go         # Individual tool implementations
+┃ ┃ ┗ 📄 *_test.go         # Tool unit tests
 ┃ ┣ 📂 contextkeys/        # Context value keys
 ┃ ┣ 📂 logger/             # Structured logging
 ┃ ┗ 📂 tui/                # Terminal UI components
+┣ 📂 tests/                 # Test suites
+┃ ┗ 📂 integration/        # Integration tests
+┣ 📂 examples/              # Usage examples and cookbooks
+┃ ┣ 📂 cookbooks/          # Step-by-step tutorials
+┃ ┗ 📂 demos/              # Demo applications
+┣ 📂 .github/               # CI/CD workflows
+┃ ┗ 📂 workflows/          # GitHub Actions
 ┣ 📂 prompts/               # LLM prompt templates
 ┃ ┣ 📄 plan.tmpl           # Planning prompt template
 ┃ ┗ 📄 generate.tmpl       # Code generation template
@@ -295,6 +327,37 @@ Interactive coding assistance with full project context:
 
 ## **6️⃣ Examples and Tutorials**
 
+CGE includes comprehensive examples and cookbooks to help you get started:
+
+### **📚 Available Cookbooks**
+
+- **[JWT Authentication](examples/cookbooks/web-development/jwt-authentication/)** - Complete guide to implementing JWT authentication in a Go web application
+- **API Development** - Building RESTful APIs with proper error handling and middleware
+- **Database Integration** - Setting up database connections, migrations, and ORM integration
+- **Testing Strategies** - Comprehensive testing approaches for Go applications
+
+### **🎯 Quick Start Examples**
+
+```bash
+# Explore available examples
+ls examples/cookbooks/
+
+# Follow a specific cookbook
+cd examples/cookbooks/web-development/jwt-authentication/
+cat README.md
+
+# Run example demos
+go run examples/demos/function_calling_demo.go
+```
+
+### **💡 Usage Patterns**
+
+Each cookbook includes:
+- **Step-by-step instructions** with CGE commands
+- **Sample code** and configuration files
+- **Best practices** and common pitfalls
+- **Testing strategies** for the implemented features
+
 📁 **Check out the [examples/](examples/) directory for detailed usage scenarios, best practices, and configuration examples for different project types.**
 
 ## **6️⃣ Workflow Examples**
@@ -350,7 +413,75 @@ cat rate-limit-plan.json
 
 ---
 
-## **7️⃣ Docker**
+## **7️⃣ Testing & Quality Assurance**
+
+CGE includes a comprehensive testing infrastructure to ensure reliability and quality:
+
+### **🧪 Test Suite**
+
+```bash
+# Run all tests
+go test ./...
+
+# Run unit tests only
+go test ./internal/...
+
+# Run integration tests
+go test ./tests/integration/...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run specific tool tests
+go test ./internal/agent/ -v
+```
+
+### **🔧 Mock Testing Framework**
+
+CGE provides a sophisticated mock tool framework for testing:
+
+- **Configurable Behaviors:** Mock tools can simulate success, failure, and custom responses
+- **Parameter Validation:** Automatic validation of tool parameters against JSON schemas
+- **Call Counting:** Track how many times tools are called during tests
+- **Realistic Fixtures:** Pre-built test data and sample projects for consistent testing
+
+```go
+// Example: Testing with mock tools
+mockTool := &testing.MockTool{
+    ToolName: "test_tool",
+    Behavior: testing.MockBehaviorSuccess,
+    ResponseData: map[string]interface{}{
+        "result": "test output",
+    },
+}
+```
+
+### **🔒 Security Testing**
+
+- **Path Traversal Protection:** Tests ensure tools cannot access files outside workspace
+- **Parameter Validation:** Comprehensive validation of all tool inputs
+- **Error Handling:** Robust error handling and recovery mechanisms
+
+### **🚀 CI/CD Pipeline**
+
+Our GitHub Actions workflows provide:
+
+- **Multi-Platform Testing:** Tests run on Ubuntu, macOS, and Windows
+- **Multiple Go Versions:** Compatibility testing across Go 1.21, 1.22, and 1.23
+- **Security Scanning:** Automated vulnerability scanning with Gosec
+- **Code Coverage:** Coverage reporting and tracking
+- **Regression Testing:** Nightly tests to catch breaking changes
+
+### **📊 Quality Metrics**
+
+- **Test Coverage:** Comprehensive unit and integration test coverage
+- **Code Quality:** Automated linting and static analysis
+- **Performance:** Benchmarking for critical operations
+- **Documentation:** All tools and functions are thoroughly documented
+
+📁 **Check out the [tests/](tests/) directory for detailed test cases and the [.github/workflows/](.github/workflows/) directory for CI/CD configurations.**
+
+## **8️⃣ Docker**
 
 ### **Building the Docker Image**
 
@@ -370,17 +501,19 @@ docker run -it -v $(pwd):/workspace -w /workspace cge:latest chat
 
 ---
 
-## **8️⃣ Contributing**
+## **9️⃣ Contributing**
 
 We welcome contributions! Please see our contributing guidelines:
 
 1. **Fork the repository**
 2. **Create a feature branch:** `git checkout -b feature/amazing-feature`
-3. **Make your changes** and add tests
-4. **Run the review process:** `./cge review --auto-fix`
-5. **Commit your changes:** `git commit -m 'Add amazing feature'`
-6. **Push to the branch:** `git push origin feature/amazing-feature`
-7. **Open a Pull Request**
+3. **Make your changes** and add comprehensive tests
+4. **Run the full test suite:** `go test ./...`
+5. **Run integration tests:** `go test ./tests/integration/...`
+6. **Run the review process:** `./cge review --auto-fix`
+7. **Commit your changes:** `git commit -m 'Add amazing feature'`
+8. **Push to the branch:** `git push origin feature/amazing-feature`
+9. **Open a Pull Request**
 
 ### **Development Setup**
 
@@ -388,29 +521,61 @@ We welcome contributions! Please see our contributing guidelines:
 # Install dependencies
 go mod download
 
-# Run tests
+# Run all tests
 go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run integration tests
+go test ./tests/integration/... -v
 
 # Build and test
 go build -o cge main.go
 ./cge plan "Test the development setup" --output test-plan.json
+
+# Run security checks (if you have gosec installed)
+gosec ./...
 ```
+
+### **Testing Requirements**
+
+When contributing:
+
+- **Unit Tests:** Add unit tests for all new functions and methods
+- **Integration Tests:** Add integration tests for new tools or major features
+- **Mock Tests:** Use the mock tool framework for testing tool interactions
+- **Security Tests:** Ensure proper parameter validation and security checks
+- **Documentation:** Update documentation and examples as needed
+
+### **Code Quality Standards**
+
+- Follow Go best practices and idioms
+- Ensure all tests pass before submitting PR
+- Add appropriate error handling and logging
+- Include security considerations for new tools
+- Maintain backward compatibility when possible
 
 ---
 
-## **9️⃣ License**
+## **10️⃣ License**
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## **🔟 Acknowledgements**
+## **11️⃣ Acknowledgements**
 
 - **Ollama** for providing excellent local LLM infrastructure
+- **OpenAI** for powerful cloud-based LLM capabilities
 - **Cobra** for the powerful CLI framework
 - **Viper** for flexible configuration management
 - **Bubble Tea** for the interactive terminal UI components
+- **GitHub Actions** for robust CI/CD infrastructure
+- **Gosec** for security scanning and vulnerability detection
+- **Testify** for enhanced testing capabilities
 - The **Go community** for excellent tooling and libraries
+- **Contributors** who have helped build and test CGE
 
 ---
 

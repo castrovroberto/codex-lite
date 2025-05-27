@@ -27,5 +27,11 @@ type Client interface {
 	// SupportsNativeFunctionCalling returns true if the provider supports native function calling
 	SupportsNativeFunctionCalling() bool
 
+	// Embed generates embeddings for the given text
+	Embed(ctx context.Context, text string) ([]float32, error)
+
+	// SupportsEmbeddings returns true if the provider supports text embeddings
+	SupportsEmbeddings() bool
+
 	// TODO: Potentially add methods for token counting, specific model capabilities, etc.
 }

@@ -44,6 +44,15 @@ func (m *MockLLMClient) SupportsNativeFunctionCalling() bool {
 	return true
 }
 
+func (m *MockLLMClient) Embed(ctx context.Context, text string) ([]float32, error) {
+	// Return a mock embedding vector
+	return []float32{0.1, 0.2, 0.3, 0.4, 0.5}, nil
+}
+
+func (m *MockLLMClient) SupportsEmbeddings() bool {
+	return true
+}
+
 // MockTool for testing
 type MockTool struct {
 	name        string

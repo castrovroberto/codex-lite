@@ -76,6 +76,15 @@ func (d *DemoLLMClient) SupportsNativeFunctionCalling() bool {
 	return true
 }
 
+func (d *DemoLLMClient) Embed(ctx context.Context, text string) ([]float32, error) {
+	// Return a mock embedding vector for demo purposes
+	return []float32{0.1, 0.2, 0.3, 0.4, 0.5}, nil
+}
+
+func (d *DemoLLMClient) SupportsEmbeddings() bool {
+	return false // Demo client doesn't really support embeddings
+}
+
 func main() {
 	fmt.Println("🚀 CGE Function-Calling Infrastructure Demo")
 	fmt.Println("==========================================")

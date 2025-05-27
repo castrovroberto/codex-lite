@@ -269,6 +269,78 @@ func (oc *OpenAIClient) SupportsNativeFunctionCalling() bool {
 	return true
 }
 
+// Embed generates embeddings for the given text using OpenAI's embedding models
+func (oc *OpenAIClient) Embed(ctx context.Context, text string) ([]float32, error) {
+	// Default embedding model - could be made configurable
+	embeddingModel := "text-embedding-ada-002"
+
+	requestPayload := map[string]interface{}{
+		"model": embeddingModel,
+		"input": text,
+	}
+
+	requestBody, err := json.Marshal(requestPayload)
+	if err != nil {
+		return nil, fmt.Errorf("openai embed: failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", oc.baseURL+"/embeddings", bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("openai embed: failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+oc.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("openai embed: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("openai embed: failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp OpenAIErrorResponse
+		if json.Unmarshal(responseBody, &errorResp) == nil {
+			return nil, fmt.Errorf("openai embed: API error - %s", errorResp.Error.Message)
+		}
+		return nil, fmt.Errorf("openai embed: API returned status %d", resp.StatusCode)
+	}
+
+	// Parse the embedding response
+	var embeddingResponse struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(responseBody, &embeddingResponse); err != nil {
+		return nil, fmt.Errorf("openai embed: failed to parse response: %w", err)
+	}
+
+	if len(embeddingResponse.Data) == 0 {
+		return nil, fmt.Errorf("openai embed: no embedding data in response")
+	}
+
+	// Convert []float64 to []float32
+	embedding := make([]float32, len(embeddingResponse.Data[0].Embedding))
+	for i, v := range embeddingResponse.Data[0].Embedding {
+		embedding[i] = float32(v)
+	}
+
+	return embedding, nil
+}
+
+// SupportsEmbeddings returns true as OpenAI supports embedding models
+func (oc *OpenAIClient) SupportsEmbeddings() bool {
+	return true
+}
+
 // makeRequest makes a non-streaming request to OpenAI API
 func (oc *OpenAIClient) makeRequest(ctx context.Context, request OpenAIRequest) (*OpenAIResponse, error) {
 	log := contextkeys.LoggerFromContext(ctx)

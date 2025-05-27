@@ -370,6 +370,90 @@ func (oc *OllamaClient) SupportsNativeFunctionCalling() bool {
 	return false
 }
 
+// Embed generates embeddings for the given text using Ollama's embedding models
+func (oc *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+	appCfg := contextkeys.ConfigPtrFromContext(ctx)
+
+	// Use Ollama's /api/embeddings endpoint
+	apiURL := fmt.Sprintf("%s/api/embeddings", strings.TrimRight(appCfg.LLM.OllamaHostURL, "/"))
+
+	// Default embedding model - could be made configurable
+	embeddingModel := "nomic-embed-text"
+
+	requestPayload := map[string]interface{}{
+		"model":  embeddingModel,
+		"prompt": text,
+	}
+
+	requestBody, err := json.Marshal(requestPayload)
+	if err != nil {
+		log.Error("Failed to marshal Ollama embedding request body", "error", err)
+		return nil, fmt.Errorf("ollama embed: failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(requestBody))
+	if err != nil {
+		log.Error("Failed to create HTTP request for Ollama embeddings", "error", err)
+		return nil, fmt.Errorf("ollama embed: failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: appCfg.LLM.RequestTimeoutSeconds}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Error("Ollama embedding request failed", "error", err)
+		var netErr net.Error
+		if errors.As(err, &netErr) && (netErr.Timeout() || !netErr.Temporary()) {
+			return nil, fmt.Errorf("%w: %v", ErrOllamaHostUnreachable, err)
+		}
+		return nil, fmt.Errorf("ollama embed: request error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	responseBodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Error("Failed to read Ollama embedding response body", "error", err)
+		return nil, fmt.Errorf("ollama embed: failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Error("Ollama embedding API returned non-OK status", "status", resp.StatusCode, "body", string(responseBodyBytes))
+		var ollamaErrorResp OllamaErrorResponse
+		if json.Unmarshal(responseBodyBytes, &ollamaErrorResp) == nil && ollamaErrorResp.Error != "" {
+			if strings.Contains(strings.ToLower(ollamaErrorResp.Error), "model not found") {
+				return nil, fmt.Errorf("%w: %s (model: %s)", ErrOllamaModelNotFound, ollamaErrorResp.Error, embeddingModel)
+			}
+			return nil, fmt.Errorf("ollama embed: API error - \"%s\" (HTTP %d)", ollamaErrorResp.Error, resp.StatusCode)
+		}
+		return nil, fmt.Errorf("ollama embed: API returned status %d", resp.StatusCode)
+	}
+
+	// Parse the embedding response
+	var embeddingResponse struct {
+		Embedding []float64 `json:"embedding"`
+	}
+
+	if err := json.Unmarshal(responseBodyBytes, &embeddingResponse); err != nil {
+		log.Error("Failed to unmarshal Ollama embedding response", "error", err)
+		return nil, fmt.Errorf("ollama embed: failed to parse response: %w", err)
+	}
+
+	// Convert []float64 to []float32
+	embedding := make([]float32, len(embeddingResponse.Embedding))
+	for i, v := range embeddingResponse.Embedding {
+		embedding[i] = float32(v)
+	}
+
+	log.Debug("Ollama embedding generated successfully", "dimension", len(embedding))
+	return embedding, nil
+}
+
+// SupportsEmbeddings returns true as Ollama supports embedding models like nomic-embed-text
+func (oc *OllamaClient) SupportsEmbeddings() bool {
+	return true
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

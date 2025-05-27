@@ -114,7 +114,10 @@ Use the tools to complete the user's request step by step.`
 		"demo-model",
 	)
 
-	runner.SetMaxIterations(10)
+	// Configure the runner with custom max iterations
+	config := orchestrator.DefaultRunConfig()
+	config.MaxIterations = 10
+	runner.SetConfig(config)
 
 	// Run the agent
 	ctx := context.Background()

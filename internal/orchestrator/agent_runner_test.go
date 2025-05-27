@@ -103,7 +103,9 @@ func TestAgentRunner_BasicFunctionCalling(t *testing.T) {
 
 	// Create agent runner
 	runner := NewAgentRunner(mockClient, registry, "You are a helpful assistant", "mock-model")
-	runner.SetMaxIterations(5)
+	config := DefaultRunConfig()
+	config.MaxIterations = 5
+	runner.SetConfig(config)
 
 	// Run the agent
 	ctx := context.Background()
@@ -225,7 +227,9 @@ func TestAgentRunner_MaxIterations(t *testing.T) {
 
 	// Create agent runner with low max iterations
 	runner := NewAgentRunner(mockClient, registry, "You are a helpful assistant", "mock-model")
-	runner.SetMaxIterations(2)
+	config := DefaultRunConfig()
+	config.MaxIterations = 2
+	runner.SetConfig(config)
 
 	// Run the agent
 	ctx := context.Background()

@@ -436,6 +436,40 @@ go test -cover ./...
 go test ./internal/agent/ -v
 ```
 
+### **🛠️ Development Tools**
+
+CGE includes several tools to help with development and debugging:
+
+```bash
+# Use Makefile for common tasks
+make help                    # Show all available commands
+make test                    # Run unit tests
+make test-integration        # Run integration tests
+make test-all               # Run all tests
+make ci-test                # Run tests like CI
+make lint                   # Run linting
+make ci-all                 # Run all CI checks locally
+
+# Debug test failures
+./scripts/debug-tests.sh     # Comprehensive test debugging
+```
+
+### **🔍 Debugging Test Failures**
+
+When tests fail in CI or locally, use these debugging tools:
+
+1. **Debug Script:** Run `./scripts/debug-tests.sh` to collect comprehensive debugging information
+2. **CI Simulation:** Use `make ci-test` to run tests exactly like CI
+3. **Test Artifacts:** Check uploaded artifacts in GitHub Actions for detailed logs
+4. **Environment Check:** Verify Go version compatibility (requires Go 1.23+)
+
+The debug script creates a timestamped directory with:
+- Test output logs
+- Environment information
+- Coverage reports
+- Linting results
+- Security scan results
+
 ### **🔧 Mock Testing Framework**
 
 CGE provides a sophisticated mock tool framework for testing:
@@ -467,10 +501,13 @@ mockTool := &testing.MockTool{
 Our GitHub Actions workflows provide:
 
 - **Multi-Platform Testing:** Tests run on Ubuntu, macOS, and Windows
-- **Multiple Go Versions:** Compatibility testing across Go 1.21, 1.22, and 1.23
-- **Security Scanning:** Automated vulnerability scanning with Gosec
-- **Code Coverage:** Coverage reporting and tracking
+- **Multiple Go Versions:** Compatibility testing across Go 1.23 and 1.24
+- **Enhanced Debugging:** Test artifacts uploaded on failure for easy debugging
+- **Security Scanning:** Automated vulnerability scanning with Gosec and govulncheck
+- **Code Coverage:** Coverage reporting and tracking with Codecov integration
+- **Quality Gates:** Comprehensive quality checks before merge
 - **Regression Testing:** Nightly tests to catch breaking changes
+- **Docker Testing:** Automated Docker image building and testing
 
 ### **📊 Quality Metrics**
 

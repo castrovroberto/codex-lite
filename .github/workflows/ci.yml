@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.23'
 
 jobs:
   test:
@@ -15,7 +15,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go-version: ['1.21', '1.22']
+        go-version: ['1.23', '1.24']
     runs-on: ${{ matrix.os }}
     
     steps:
@@ -44,15 +44,29 @@ jobs:
       run: go mod verify
       
     - name: Run unit tests
-      run: go test -v -race -coverprofile=coverage.out ./...
+      run: go test -v -race -coverprofile=coverage.out ./... | tee test-results.log
+      
+    - name: Upload test results on failure
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-${{ matrix.os }}-go${{ matrix.go-version }}
+        path: test-results.log
+      if: failure()
       
     - name: Run integration tests
-      run: go test -v -tags=integration ./tests/integration/...
-      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.21'
+      run: go test -v -tags=integration ./tests/integration/... | tee integration-test-results.log
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
+      
+    - name: Upload integration test results on failure
+      uses: actions/upload-artifact@v3
+      with:
+        name: integration-test-results-${{ matrix.os }}-go${{ matrix.go-version }}
+        path: integration-test-results.log
+      if: failure() && matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
       
     - name: Generate coverage report
       run: go tool cover -html=coverage.out -o coverage.html
-      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.21'
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
       
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -60,14 +74,14 @@ jobs:
         file: ./coverage.out
         flags: unittests
         name: codecov-umbrella
-      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.21'
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
       
     - name: Upload coverage artifacts
       uses: actions/upload-artifact@v3
       with:
         name: coverage-report-${{ matrix.os }}-go${{ matrix.go-version }}
         path: coverage.html
-      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.21'
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
 
   lint:
     name: Lint

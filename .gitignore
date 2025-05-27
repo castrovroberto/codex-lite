@@ -30,7 +30,40 @@ project/
 
 # binaries
 CGE
+cge
+cge-*
 
 # Docker files
 Dockerfile
 .dockerignore
+
+# Development and debugging artifacts
+debug-output-*
+test-results.log
+integration-test-results.log
+coverage.html
+coverage.out
+gosec.sarif
+
+# Build artifacts from Makefile
+*.html
+*.sarif
+
+# golangci-lint cache
+.golangci-lint-cache
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

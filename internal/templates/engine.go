@@ -4,20 +4,26 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"text/template"
+
+	"github.com/castrovroberto/CGE/internal/security"
 )
 
 // Engine handles template rendering
 type Engine struct {
 	templatesDir string
+	safeOps      *security.SafeFileOps
 }
 
 // NewEngine creates a new template engine
 func NewEngine(templatesDir string) *Engine {
+	// Create safe file operations with templates directory as allowed root
+	safeOps := security.NewSafeFileOps(templatesDir)
+
 	return &Engine{
 		templatesDir: templatesDir,
+		safeOps:      safeOps,
 	}
 }
 
@@ -25,8 +31,8 @@ func NewEngine(templatesDir string) *Engine {
 func (e *Engine) Render(templateName string, data interface{}) (string, error) {
 	templatePath := filepath.Join(e.templatesDir, templateName)
 
-	// Read template file
-	content, err := os.ReadFile(templatePath)
+	// Read template file using secure file operations
+	content, err := e.safeOps.SafeReadFile(templatePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read template %s: %w", templatePath, err)
 	}

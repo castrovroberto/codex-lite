@@ -5,7 +5,10 @@ run:
 
 linters-settings:
   govet:
-    check-shadowing: false
+    # Use default govet settings without deprecated check-shadowing
+    enable-all: false
+    disable:
+      - fieldalignment  # Can be noisy
   lll:
     line-length: 140
   goimports:

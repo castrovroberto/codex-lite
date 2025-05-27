@@ -10,6 +10,7 @@ import (
 
 	"github.com/castrovroberto/CGE/internal/contextkeys"
 	"github.com/castrovroberto/CGE/internal/llm"
+	"github.com/castrovroberto/CGE/internal/security"
 	"github.com/castrovroberto/CGE/internal/templates"
 	"github.com/spf13/cobra"
 )
@@ -115,7 +116,16 @@ Example:
 
 // readPlan reads and parses a plan.json file
 func readPlan(filePath string) (*Plan, error) {
-	data, err := os.ReadFile(filePath)
+	// Get current working directory as allowed root
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Create safe file operations with current directory as allowed root
+	safeOps := security.NewSafeFileOps(cwd)
+
+	data, err := safeOps.SafeReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read plan file: %w", err)
 	}
@@ -159,11 +169,14 @@ func processTask(ctx context.Context, task PlanTask, plan *Plan, llmClient llm.C
 		return nil
 	}
 
+	// Create safe file operations with workspace root as allowed root
+	safeOps := security.NewSafeFileOps(workspaceRoot)
+
 	// 1. Read current file contents for files to modify
 	currentFileContents := ""
 	for _, filePath := range task.FilesToModify {
 		fullPath := filepath.Join(workspaceRoot, filePath)
-		if content, err := os.ReadFile(fullPath); err == nil {
+		if content, err := safeOps.SafeReadFile(fullPath); err == nil {
 			currentFileContents += fmt.Sprintf("=== %s ===\n%s\n\n", filePath, string(content))
 		} else {
 			currentFileContents += fmt.Sprintf("=== %s ===\n(File not found or unreadable)\n\n", filePath)
@@ -285,6 +298,9 @@ func applyChangesToFiles(changes []struct {
 	Diff     string `json:"diff"`
 	Reason   string `json:"reason"`
 }, workspaceRoot string) error {
+	// Create safe file operations with workspace root as allowed root
+	safeOps := security.NewSafeFileOps(workspaceRoot)
+
 	// Create backups for rollback capability
 	backups := make(map[string][]byte)
 
@@ -292,7 +308,7 @@ func applyChangesToFiles(changes []struct {
 	for _, change := range changes {
 		if change.Action == "modify" || change.Action == "delete" {
 			fullPath := filepath.Join(workspaceRoot, change.FilePath)
-			if content, err := os.ReadFile(fullPath); err == nil {
+			if content, err := safeOps.SafeReadFile(fullPath); err == nil {
 				backups[change.FilePath] = content
 			}
 		}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/castrovroberto/CGE/internal/contextkeys"
 	"github.com/castrovroberto/CGE/internal/llm"
+	"github.com/castrovroberto/CGE/internal/security"
 	"github.com/castrovroberto/CGE/internal/templates"
 	"github.com/spf13/cobra"
 )
@@ -274,6 +275,9 @@ func printReviewResults(result *ReviewResult, cycle int) {
 func applyLLMFixes(ctx context.Context, result *ReviewResult, llmClient llm.Client, templateEngine *templates.Engine, targetDir string, cfg interface{}, logger interface{}) error {
 	fmt.Printf("🤖 Analyzing issues with LLM...\n")
 
+	// Create safe file operations with target directory as allowed root
+	safeOps := security.NewSafeFileOps(targetDir)
+
 	// 1. Gather relevant file contents for files that might need fixing
 	fileContents := make(map[string]string)
 
@@ -286,7 +290,7 @@ func applyLLMFixes(ctx context.Context, result *ReviewResult, llmClient llm.Clie
 		// Only include relevant source files
 		if strings.HasSuffix(path, ".go") && !strings.Contains(path, "vendor/") {
 			relPath, _ := filepath.Rel(targetDir, path)
-			if content, readErr := os.ReadFile(path); readErr == nil {
+			if content, readErr := safeOps.SafeReadFile(path); readErr == nil {
 				fileContents[relPath] = string(content)
 			}
 		}
@@ -375,12 +379,12 @@ func applyLLMFixes(ctx context.Context, result *ReviewResult, llmClient llm.Clie
 
 			// Create backup
 			backupPath := fullPath + ".backup"
-			if originalContent, err := os.ReadFile(fullPath); err == nil {
-				_ = os.WriteFile(backupPath, originalContent, 0600)
+			if originalContent, err := safeOps.SafeReadFile(fullPath); err == nil {
+				_ = safeOps.SafeWriteFile(backupPath, originalContent, 0600)
 			}
 
 			// Apply fix
-			if err := os.WriteFile(fullPath, []byte(fix.Content), 0600); err != nil {
+			if err := safeOps.SafeWriteFile(fullPath, []byte(fix.Content), 0600); err != nil {
 				fmt.Printf("❌ Failed to apply fix to %s: %v\n", fix.FilePath, err)
 				continue
 			}

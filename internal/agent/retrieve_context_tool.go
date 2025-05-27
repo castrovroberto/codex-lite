@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/castrovroberto/CGE/internal/security"
 	"github.com/castrovroberto/CGE/internal/textutils"
 	"github.com/castrovroberto/CGE/internal/vectorstore"
 )
@@ -536,7 +537,16 @@ func matchesPattern(file, pattern string) bool {
 }
 
 func readFileContent(filepath string) (string, error) {
-	content, err := os.ReadFile(filepath)
+	// Get current working directory as allowed root
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Create safe file operations with current directory as allowed root
+	safeOps := security.NewSafeFileOps(cwd)
+
+	content, err := safeOps.SafeReadFile(filepath)
 	if err != nil {
 		return "", err
 	}

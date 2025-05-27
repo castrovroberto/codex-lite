@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/castrovroberto/CGE/internal/audit"
+	"github.com/castrovroberto/CGE/internal/security"
 	"github.com/google/uuid"
 )
 
@@ -48,11 +49,12 @@ type ToolCallResult struct {
 	Error   string      `json:"error,omitempty"`
 }
 
-// SessionManager handles persistence and management of agent sessions
+// SessionManager manages session state persistence
 type SessionManager struct {
 	workspaceRoot string
 	sessionDir    string
 	auditLogger   *audit.AuditLogger
+	safeOps       *security.SafeFileOps
 }
 
 // NewSessionManager creates a new session manager
@@ -62,10 +64,14 @@ func NewSessionManager(workspaceRoot string, auditLogger *audit.AuditLogger) (*S
 		return nil, fmt.Errorf("failed to create session directory: %w", err)
 	}
 
+	// Create safe file operations with workspace root and session directory as allowed roots
+	safeOps := security.NewSafeFileOps(workspaceRoot, sessionDir)
+
 	return &SessionManager{
 		workspaceRoot: workspaceRoot,
 		sessionDir:    sessionDir,
 		auditLogger:   auditLogger,
+		safeOps:       safeOps,
 	}, nil
 }
 
@@ -121,7 +127,7 @@ func (sm *SessionManager) LoadSession(sessionID string) (*SessionState, error) {
 	filename := fmt.Sprintf("session_%s.json", sessionID)
 	filepath := filepath.Join(sm.sessionDir, filename)
 
-	data, err := os.ReadFile(filepath)
+	data, err := sm.safeOps.SafeReadFile(filepath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read session file: %w", err)
 	}
@@ -284,7 +290,7 @@ func (sm *SessionManager) ExportSessionToJSONL(sessionID string, outputPath stri
 		return err
 	}
 
-	file, err := os.Create(outputPath)
+	file, err := sm.safeOps.SafeCreate(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to create export file: %w", err)
 	}

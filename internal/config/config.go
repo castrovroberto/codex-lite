@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/castrovroberto/CGE/internal/security"
 	"github.com/spf13/viper"
 )
 
@@ -213,7 +214,17 @@ func LoadConfig(cfgFile string) error {
 				// Potentially use Cfg.ChatSystemPromptFile as is, or handle error
 				Cfg.loadedChatSystemPromptContent = defaultInternalSystemPrompt
 			} else {
-				content, err := os.ReadFile(absPath)
+				// Get directory containing the config file as allowed root
+				configDir := filepath.Dir(viper.ConfigFileUsed())
+				if configDir == "" {
+					// If no config file was used, use current directory
+					configDir, _ = os.Getwd()
+				}
+
+				// Create safe file operations with config directory as allowed root
+				safeOps := security.NewSafeFileOps(configDir)
+
+				content, err := safeOps.SafeReadFile(absPath)
 				if err != nil {
 					log.Printf("Warning: could not read chat_system_prompt_file '%s': %v. Using default prompt.", absPath, err)
 					Cfg.loadedChatSystemPromptContent = defaultInternalSystemPrompt // Use default

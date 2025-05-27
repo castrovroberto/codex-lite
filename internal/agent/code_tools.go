@@ -4,23 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/castrovroberto/CGE/internal/analyzer"
+	"github.com/castrovroberto/CGE/internal/security"
 )
 
 // CodeSearchTool implements semantic code search
 type CodeSearchTool struct {
 	workspaceRoot string
+	safeOps       *security.SafeFileOps
 }
 
 func NewCodeSearchTool(workspaceRoot string) *CodeSearchTool {
+	// Create safe file operations with workspace root as allowed root
+	safeOps := security.NewSafeFileOps(workspaceRoot)
+
 	return &CodeSearchTool{
 		workspaceRoot: workspaceRoot,
+		safeOps:       safeOps,
 	}
 }
 
@@ -61,48 +66,36 @@ func (t *CodeSearchTool) Execute(ctx context.Context, params json.RawMessage) (*
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
-	// Validate that the query field exists (check the raw JSON)
-	var rawParams map[string]interface{}
-	if err := json.Unmarshal(params, &rawParams); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
-	if _, exists := rawParams["query"]; !exists {
-		return nil, fmt.Errorf("missing required parameter: query")
+	if p.Query == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "query parameter is required",
+		}, nil
 	}
 
-	// Get all files to search in
 	var matches []map[string]interface{}
-	err := filepath.WalkDir(t.workspaceRoot, func(path string, d fs.DirEntry, err error) error {
+
+	// Walk through the codebase
+	err := filepath.Walk(t.workspaceRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return nil
 		}
 
-		// Skip directories and non-regular files
-		if d.IsDir() {
-			// Skip common directories
-			if analyzer.IsSkippableDir(d.Name()) {
+		// Skip directories and non-source files
+		if info.IsDir() {
+			if analyzer.IsSkippableDir(info.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		// Skip binary and very large files
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		if info.Size() > 1024*1024 { // Skip files larger than 1MB
-			return nil
-		}
-
-		// Skip files with non-text extensions
 		ext := strings.ToLower(filepath.Ext(path))
 		if !analyzer.IsSourceFile(ext) {
 			return nil
 		}
 
-		// Read file content
-		content, err := os.ReadFile(path)
+		// Read file content using secure file operations
+		content, err := t.safeOps.SafeReadFile(path)
 		if err != nil {
 			return nil
 		}
@@ -236,11 +229,16 @@ func min(a, b int) int {
 // FileReadTool implements file reading capability
 type FileReadTool struct {
 	workspaceRoot string
+	safeOps       *security.SafeFileOps
 }
 
 func NewFileReadTool(workspaceRoot string) *FileReadTool {
+	// Create safe file operations with workspace root as allowed root
+	safeOps := security.NewSafeFileOps(workspaceRoot)
+
 	return &FileReadTool{
 		workspaceRoot: workspaceRoot,
+		safeOps:       safeOps,
 	}
 }
 
@@ -300,8 +298,8 @@ func (t *FileReadTool) Execute(ctx context.Context, params json.RawMessage) (*To
 		filePath = filepath.Join(t.workspaceRoot, filePath)
 	}
 
-	// Read file
-	content, err := os.ReadFile(filePath)
+	// Read file using secure file operations
+	content, err := t.safeOps.SafeReadFile(filePath)
 	if err != nil {
 		return &ToolResult{
 			Success: false,

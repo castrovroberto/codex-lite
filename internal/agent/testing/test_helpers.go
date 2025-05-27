@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/security"
 )
 
 // TestWorkspace represents a temporary workspace for testing
@@ -96,7 +97,11 @@ func (w *TestWorkspace) CreateDir(relativePath string) {
 // ReadFile reads a file from the workspace
 func (w *TestWorkspace) ReadFile(relativePath string) string {
 	fullPath := filepath.Join(w.Dir, relativePath)
-	content, err := os.ReadFile(fullPath)
+
+	// Create safe file operations with workspace directory as allowed root
+	safeOps := security.NewSafeFileOps(w.Dir)
+
+	content, err := safeOps.SafeReadFile(fullPath)
 	if err != nil {
 		w.T.Fatalf("Failed to read file %s: %v", fullPath, err)
 	}

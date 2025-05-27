@@ -7,9 +7,10 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/castrovroberto/CGE/internal/security"
 )
 
 // ComplexityInfo holds code complexity metrics
@@ -31,6 +32,9 @@ type FuncComplexity struct {
 
 // AnalyzeComplexity performs code complexity analysis
 func AnalyzeComplexity(rootPath string) ([]*ComplexityInfo, error) {
+	// Create safe file operations with root path as allowed root
+	safeOps := security.NewSafeFileOps(rootPath)
+
 	var results []*ComplexityInfo
 
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
@@ -50,7 +54,7 @@ func AnalyzeComplexity(rootPath string) ([]*ComplexityInfo, error) {
 			return nil
 		}
 
-		info, err := analyzeGoFile(path)
+		info, err := analyzeGoFile(path, safeOps)
 		if err != nil {
 			return fmt.Errorf("failed to analyze %s: %w", path, err)
 		}
@@ -69,8 +73,8 @@ func AnalyzeComplexity(rootPath string) ([]*ComplexityInfo, error) {
 	return results, nil
 }
 
-func analyzeGoFile(path string) (*ComplexityInfo, error) {
-	content, err := os.ReadFile(path)
+func analyzeGoFile(path string, safeOps *security.SafeFileOps) (*ComplexityInfo, error) {
+	content, err := safeOps.SafeReadFile(path)
 	if err != nil {
 		return nil, err
 	}

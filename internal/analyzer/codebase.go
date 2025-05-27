@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/castrovroberto/CGE/internal/security"
 )
 
 // Common directories to skip during analysis
@@ -61,6 +63,9 @@ func AnalyzeCodebase(rootPath string, customExts []string) (*CodebaseInfo, error
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
+	// Create safe file operations with root path as allowed root
+	safeOps := security.NewSafeFileOps(absPath)
+
 	// Initialize codebase info
 	info := &CodebaseInfo{
 		RootPath:    absPath,
@@ -111,8 +116,8 @@ func AnalyzeCodebase(rootPath string, customExts []string) (*CodebaseInfo, error
 		info.FileCount++
 		info.FilesByType[ext]++
 
-		// Count lines
-		content, err := os.ReadFile(path)
+		// Count lines using secure file operations
+		content, err := safeOps.SafeReadFile(path)
 		if err != nil {
 			info.Errors = append(info.Errors, fmt.Sprintf("Error reading %s: %v", path, err))
 			return nil

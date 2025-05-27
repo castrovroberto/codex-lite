@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/castrovroberto/CGE/internal/security"
 	"github.com/sourcegraph/go-diff/diff"
 )
 
@@ -40,17 +41,22 @@ type ApplyResult struct {
 	NewSize      int    `json:"new_size"`
 }
 
-// PatchApplier handles robust patch application using go-diff
+// PatchApplier handles applying patches to files
 type PatchApplier struct {
 	workspaceRoot string
 	options       ApplyOptions
+	safeOps       *security.SafeFileOps
 }
 
 // NewPatchApplier creates a new patch applier
 func NewPatchApplier(workspaceRoot string, options ApplyOptions) *PatchApplier {
+	// Create safe file operations with workspace root as allowed root
+	safeOps := security.NewSafeFileOps(workspaceRoot)
+
 	return &PatchApplier{
 		workspaceRoot: workspaceRoot,
 		options:       options,
+		safeOps:       safeOps,
 	}
 }
 
@@ -286,9 +292,9 @@ func (pa *PatchApplier) rollbackPatches(filePaths []string) {
 
 		// Use the most recent backup
 		backupPath := matches[len(matches)-1]
-		if backupContent, err := os.ReadFile(backupPath); err == nil {
-			os.WriteFile(fullPath, backupContent, 0600)
-			os.Remove(backupPath) // Clean up backup after restore
+		if backupContent, err := pa.safeOps.SafeReadFile(backupPath); err == nil {
+			pa.safeOps.SafeWriteFile(fullPath, backupContent, 0600)
+			pa.safeOps.SafeRemove(backupPath) // Clean up backup after restore
 		}
 	}
 }

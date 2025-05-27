@@ -67,18 +67,37 @@ func NewAuditLogger(workspaceRoot string, sessionID string) (*AuditLogger, error
 		sessionID = uuid.New().String()
 	}
 
-	logDir := filepath.Join(workspaceRoot, ".cge", "audit")
+	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path for workspace root: %w", err)
+	}
+	cleanWorkspaceRoot := filepath.Clean(absWorkspaceRoot)
+
+	logDir := filepath.Join(cleanWorkspaceRoot, ".cge", "audit")
+
+	if !strings.HasPrefix(filepath.Clean(logDir), cleanWorkspaceRoot) {
+		return nil, fmt.Errorf("audit log directory path is outside the intended workspace root")
+	}
+
 	if err := os.MkdirAll(logDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create audit log directory: %w", err)
 	}
-
 	logFileName := fmt.Sprintf("audit_%s_%s.jsonl",
 		time.Now().Format("2006-01-02"), sessionID[:8])
-	logFilePath := filepath.Join(logDir, logFileName)
 
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	rawLogFilePath := filepath.Join(logDir, logFileName)
+	cleanLogFilePath := filepath.Clean(rawLogFilePath)
+	cleanLogDir := filepath.Clean(logDir)
+
+	if !strings.HasPrefix(cleanLogFilePath, cleanLogDir+string(os.PathSeparator)) && cleanLogFilePath != cleanLogDir {
+		if filepath.Dir(cleanLogFilePath) != cleanLogDir {
+			return nil, fmt.Errorf("resolved log file path '%s' is outside the allowed audit directory '%s'", cleanLogFilePath, cleanLogDir)
+		}
+	}
+
+	logFile, err := os.OpenFile(cleanLogFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open audit log file: %w", err)
+		return nil, fmt.Errorf("failed to open audit log file '%s': %w", cleanLogFilePath, err)
 	}
 
 	return &AuditLogger{
@@ -271,18 +290,27 @@ func (al *AuditLogger) LogError(operation OperationType, context string, err err
 // writeEvent writes an event to the log file
 func (al *AuditLogger) writeEvent(event AuditEvent) {
 	if al.logFile == nil {
+		// Perhaps log to stderr that the logFile is nil if this isn't expected
+		// fmt.Fprintf(os.Stderr, "AuditLogger: logFile is nil, cannot write event ID %s\n", event.ID)
 		return
 	}
 
 	eventJSON, err := json.Marshal(event)
 	if err != nil {
-		// Can't log the logging error, just return
+		fmt.Fprintf(os.Stderr, "AuditLogger: Error marshaling audit event ID %s: %v\n", event.ID, err)
 		return
 	}
 
-	al.logFile.Write(eventJSON)
-	al.logFile.Write([]byte("\n"))
-	al.logFile.Sync() // Ensure immediate write
+	if _, err := al.logFile.Write(eventJSON); err != nil {
+		fmt.Fprintf(os.Stderr, "AuditLogger: Error writing audit event ID %s to log file: %v\n", event.ID, err)
+		// Potentially return or handle more gracefully if write failure is critical
+	}
+	if _, err := al.logFile.Write([]byte("\n")); err != nil {
+		fmt.Fprintf(os.Stderr, "AuditLogger: Error writing newline after event ID %s to audit log file: %v\n", event.ID, err)
+	}
+	if err := al.logFile.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "AuditLogger: Error syncing audit log file after event ID %s: %v\n", event.ID, err)
+	}
 }
 
 // Close closes the audit logger
@@ -333,7 +361,17 @@ func (al *AuditLogger) QueryEvents(filter func(AuditEvent) bool) ([]AuditEvent, 
 
 // readEventsFromFile reads events from a specific log file
 func (al *AuditLogger) readEventsFromFile(filePath string, filter func(AuditEvent) bool) ([]AuditEvent, error) {
-	content, err := os.ReadFile(filePath)
+	cleanFilePath := filepath.Clean(filePath)
+
+	cleanLogDir := filepath.Clean(al.logDir)
+
+	if !strings.HasPrefix(cleanFilePath, cleanLogDir+string(os.PathSeparator)) && cleanFilePath != cleanLogDir {
+		if filepath.Dir(cleanFilePath) != cleanLogDir {
+			return nil, fmt.Errorf("file path '%s' (cleaned: '%s') is outside the allowed audit directory '%s'", filePath, cleanFilePath, cleanLogDir)
+		}
+	}
+
+	content, err := os.ReadFile(cleanFilePath)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +386,7 @@ func (al *AuditLogger) readEventsFromFile(filePath string, filter func(AuditEven
 
 		var event AuditEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue // Skip malformed lines
+			continue
 		}
 
 		if filter == nil || filter(event) {

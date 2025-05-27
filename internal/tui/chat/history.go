@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/castrovroberto/CGE/internal/security"
 )
 
 // ChatHistory represents the persistent chat history
@@ -84,7 +86,10 @@ func LoadHistory(sessionID string) (*ChatHistory, error) {
 	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
 	filepath := filepath.Join(historyDir, fmt.Sprintf("chat_%s.json", sessionID))
 
-	data, err := os.ReadFile(filepath)
+	// Create safe file operations with history directory as allowed root
+	safeOps := security.NewSafeFileOps(historyDir)
+
+	data, err := safeOps.SafeReadFile(filepath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read chat history: %w", err)
 	}

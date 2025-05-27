@@ -40,7 +40,7 @@ var securityPatterns = []struct {
 	},
 	{
 		Type:        "Private Key",
-		Pattern:     regexp.MustCompile(`-----BEGIN [A-Z]+ PRIVATE KEY-----`),
+		Pattern:     regexp.MustCompile(`-{5}BEGIN [A-Z]+ PRIVATE KEY-{5}`),
 		Description: "Private key found in source code",
 		Severity:    "CRITICAL",
 	},

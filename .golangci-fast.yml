@@ -2,19 +2,9 @@ run:
   timeout: 2m
   go: "1.23"
   modules-download-mode: readonly
-  # Skip vendor and generated files
-  skip-dirs:
-    - vendor
-    - .git
-    - node_modules
-  skip-files:
-    - ".*\\.pb\\.go$"
-    - ".*\\.gen\\.go$"
-    - ".*_generated\\.go$"
 
 linters-settings:
-  govet:
-    check-shadowing: false  # Expensive check, disabled for speed
+  govet: {} # Removed check-shadowing: false
   gocyclo:
     min-complexity: 20  # Increased threshold to reduce noise
   dupl:
@@ -54,6 +44,18 @@ linters:
     - unconvert     # Unnecessary conversions
 
 issues:
+  # Moved from run.skip-files (fixes deprecation warning)
+  exclude-files:
+    - ".*\\.pb\\.go$"
+    - ".*\\.gen\\.go$"
+    - ".*_generated\\.go$"
+  
+  # Moved from run.skip-dirs (fixes deprecation warning)
+  exclude-dirs:
+    - vendor
+    - .git
+    - node_modules
+  
   exclude-rules:
     # Exclude test files from some checks
     - path: _test\.go
@@ -86,4 +88,4 @@ issues:
   max-same-issues: 10        # Limit duplicate issues
 
 service:
-  golangci-lint-version: 1.64.x 
+  golangci-lint-version: 1.64.x

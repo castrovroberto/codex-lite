@@ -221,8 +221,19 @@ type ReviewResponse struct {
 func (ci *CommandIntegrator) ExecuteReview(ctx context.Context, req *ReviewRequest) (*ReviewResponse, error) {
 	log := contextkeys.LoggerFromContext(ctx)
 
-	// Prepare system prompt for review
-	systemPrompt := `You are an expert software engineer specializing in code review and debugging.
+	// Load the review template
+	reviewTemplateData := map[string]interface{}{
+		"TargetDir":  req.TargetDir,
+		"TestOutput": req.TestOutput,
+		"LintOutput": req.LintOutput,
+		"MaxCycles":  req.MaxCycles,
+	}
+
+	systemPrompt, err := ci.templateEngine.Render("review_orchestrated.tmpl", reviewTemplateData)
+	if err != nil {
+		// Fallback to hardcoded prompt if template fails
+		log.Warn("Failed to load review template, using fallback", "error", err)
+		systemPrompt = `You are an expert software engineer specializing in code review and debugging.
 
 Your task is to analyze test failures and linting issues, then fix them by making precise code changes.
 
@@ -239,6 +250,7 @@ For each issue:
 4. Verify the fix by running tests/linters again
 
 Work systematically through all issues. Focus on making minimal, precise changes that address the root cause.`
+	}
 
 	// Create agent runner with review configuration
 	runner := NewAgentRunner(ci.llmClient, ci.toolRegistry, systemPrompt, req.Model)

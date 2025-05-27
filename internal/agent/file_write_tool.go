@@ -66,6 +66,18 @@ func (t *FileWriteTool) Execute(ctx context.Context, params json.RawMessage) (*T
 		}, nil
 	}
 
+	// Set default value for CreateDirsIfNeeded
+	if p.CreateDirsIfNeeded == false {
+		// Check if the field was explicitly set to false in the JSON
+		var rawParams map[string]interface{}
+		if err := json.Unmarshal(params, &rawParams); err == nil {
+			if _, exists := rawParams["create_dirs_if_needed"]; !exists {
+				// Field not specified, use default value of true
+				p.CreateDirsIfNeeded = true
+			}
+		}
+	}
+
 	// Validate file path
 	if p.FilePath == "" {
 		return &ToolResult{
@@ -75,9 +87,20 @@ func (t *FileWriteTool) Execute(ctx context.Context, params json.RawMessage) (*T
 	}
 
 	// Security check: ensure path is within workspace
-	fullPath := filepath.Join(t.workspaceRoot, p.FilePath)
+	var fullPath string
+	if filepath.IsAbs(p.FilePath) {
+		// Absolute paths are not allowed
+		return &ToolResult{
+			Success: false,
+			Error:   "absolute file paths are not allowed",
+		}, nil
+	} else {
+		fullPath = filepath.Join(t.workspaceRoot, p.FilePath)
+	}
+
 	cleanPath := filepath.Clean(fullPath)
-	if !strings.HasPrefix(cleanPath, filepath.Clean(t.workspaceRoot)) {
+	cleanWorkspace := filepath.Clean(t.workspaceRoot)
+	if !strings.HasPrefix(cleanPath, cleanWorkspace) {
 		return &ToolResult{
 			Success: false,
 			Error:   "file path is outside workspace root",

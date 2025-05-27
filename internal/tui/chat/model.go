@@ -41,6 +41,85 @@ type (
 // Add a new message type for main context cancellation
 type mainContextCancelledMsg struct{}
 
+// Progress tracking message types
+type toolProgressMsg struct {
+	toolCallID string
+	toolName   string
+	progress   float64 // 0.0 to 1.0
+	status     string  // Current status description
+	step       int     // Current step number
+	totalSteps int     // Total number of steps
+}
+
+type toolStartMsg struct {
+	toolCallID string
+	toolName   string
+	params     map[string]interface{}
+}
+
+type toolCompleteMsg struct {
+	toolCallID string
+	toolName   string
+	success    bool
+	result     string
+	duration   time.Duration
+	error      string
+}
+
+// toolProgressState tracks the progress of an active tool call
+type toolProgressState struct {
+	toolName     string
+	startTime    time.Time
+	progress     float64
+	status       string
+	step         int
+	totalSteps   int
+	messageIndex int // Index in messages array for updating
+}
+
+// ProgressRenderer handles rendering of progress bars and status
+type ProgressRenderer struct {
+	width int
+}
+
+// NewProgressRenderer creates a new progress renderer
+func NewProgressRenderer(width int) *ProgressRenderer {
+	return &ProgressRenderer{width: width}
+}
+
+// RenderProgress renders a progress bar with status
+func (pr *ProgressRenderer) RenderProgress(state *toolProgressState) string {
+	if state == nil {
+		return ""
+	}
+
+	// Progress bar
+	barWidth := pr.width - 20 // Leave space for text
+	if barWidth < 10 {
+		barWidth = 10
+	}
+
+	filled := int(state.progress * float64(barWidth))
+	if filled > barWidth {
+		filled = barWidth
+	}
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+
+	// Status text
+	elapsed := time.Since(state.startTime)
+	statusText := fmt.Sprintf("🔄 %s", state.toolName)
+
+	if state.totalSteps > 0 {
+		statusText += fmt.Sprintf(" (%d/%d)", state.step, state.totalSteps)
+	}
+
+	statusText += fmt.Sprintf(" %.1f%% - %s", state.progress*100, state.status)
+	statusText += fmt.Sprintf(" (%.1fs)", elapsed.Seconds())
+
+	return fmt.Sprintf("%s\n[%s]", statusText, bar)
+}
+
 // chatMessage holds a single chat entry for re-rendering
 type chatMessage struct {
 	text         string
@@ -51,6 +130,15 @@ type chatMessage struct {
 	sender       string
 	placeholder  bool
 	ThinkingTime time.Duration // New field for LLM thinking time
+
+	// Enhanced tool call support
+	isToolCall   bool                   // New: indicates this is a tool call message
+	isToolResult bool                   // New: indicates this is a tool result message
+	toolName     string                 // New: name of the tool being called/result from
+	toolCallID   string                 // New: unique ID for tool call correlation
+	toolSuccess  bool                   // New: whether tool execution was successful
+	toolDuration time.Duration          // New: how long the tool took to execute
+	toolParams   map[string]interface{} // New: tool parameters for display
 }
 
 // Model defines the state of the chat TUI
@@ -79,6 +167,13 @@ type Model struct {
 	statusStyle       lipgloss.Style // New: for status bar
 	suggestionStyle   lipgloss.Style // New: for suggestions
 	thinkingTimeStyle lipgloss.Style // New style for thinking time
+
+	// Tool call specific styles
+	toolCallStyle    lipgloss.Style // New: for tool call messages
+	toolResultStyle  lipgloss.Style // New: for tool result messages
+	toolSuccessStyle lipgloss.Style // New: for successful tool results
+	toolErrorStyle   lipgloss.Style // New: for failed tool results
+	toolParamsStyle  lipgloss.Style // New: for tool parameters display
 
 	// Context and config
 	cfg       *config.AppConfig
@@ -109,6 +204,10 @@ type Model struct {
 
 	// Available slash commands for suggestions
 	availableCommands []string
+
+	// Progress tracking
+	activeToolCalls  map[string]*toolProgressState // Track active tool calls
+	progressRenderer *ProgressRenderer             // Custom progress renderer
 }
 
 var defaultSlashCommands = []string{
@@ -116,6 +215,8 @@ var defaultSlashCommands = []string{
 	"/model ", // Suggest space for model name
 	"/clear",
 	"/session ", // Suggest space for session id or action
+	"/status",   // Show current status and statistics
+	"/tools",    // List available tools
 	"/quit",
 }
 
@@ -180,6 +281,39 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 	thinkingTimeStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("242")) // New style for thinking time
 
+	// Tool call styles
+	toolCallStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("25")).
+		Foreground(lipgloss.Color("255")).
+		Padding(0, 1).
+		Margin(0, 0, 1, 0).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("33"))
+
+	toolResultStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("236")).
+		Foreground(lipgloss.Color("252")).
+		Padding(0, 1).
+		Margin(0, 0, 1, 0)
+
+	toolSuccessStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("22")).
+		Foreground(lipgloss.Color("255")).
+		Padding(0, 1).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("28"))
+
+	toolErrorStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("52")).
+		Foreground(lipgloss.Color("255")).
+		Padding(0, 1).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("196"))
+
+	toolParamsStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Italic(true)
+
 	// Setup loading spinner
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -202,6 +336,11 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		suggestionStyle:   suggestionStyle,
 		errorStyle:        lipgloss.NewStyle().Foreground(lipgloss.Color("196")),
 		thinkingTimeStyle: thinkingTimeStyle,
+		toolCallStyle:     toolCallStyle,
+		toolResultStyle:   toolResultStyle,
+		toolSuccessStyle:  toolSuccessStyle,
+		toolErrorStyle:    toolErrorStyle,
+		toolParamsStyle:   toolParamsStyle,
 		cfg:               cfg,
 		parentCtx:         ctx,
 		renderer:          renderer,
@@ -212,6 +351,8 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		isEditing:         false,
 		chatStartTime:     time.Now(),
 		availableCommands: defaultSlashCommands, // Initialize with default commands
+		activeToolCalls:   make(map[string]*toolProgressState),
+		progressRenderer:  NewProgressRenderer(50), // Default width, will be updated on resize
 	}
 
 	// Initialize and set the LLM client
@@ -349,6 +490,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Height = msg.Height - m.textarea.Height() - 1 - hFrame // -1 for the status bar line
 		m.textarea.SetWidth(msg.Width)
 
+		// Update progress renderer width
+		if m.progressRenderer != nil {
+			m.progressRenderer.width = msg.Width
+		}
+
 		if m.renderer != nil {
 			newRenderer, err := glamour.NewTermRenderer(
 				glamour.WithAutoStyle(),
@@ -366,6 +512,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
+
+	case toolProgressMsg:
+		// Update progress for active tool call
+		if state, exists := m.activeToolCalls[msg.toolCallID]; exists {
+			state.progress = msg.progress
+			state.status = msg.status
+			state.step = msg.step
+			state.totalSteps = msg.totalSteps
+
+			// Update the message in place if it exists
+			if state.messageIndex >= 0 && state.messageIndex < len(m.messages) {
+				// Update the progress display in the existing message
+				m.rebuildViewport()
+			}
+		}
+
+	case toolStartMsg:
+		// Start tracking a new tool call
+		m.activeToolCalls[msg.toolCallID] = &toolProgressState{
+			toolName:     msg.toolName,
+			startTime:    time.Now(),
+			progress:     0.0,
+			status:       "Starting...",
+			step:         0,
+			totalSteps:   0,
+			messageIndex: len(m.messages), // Will be the next message
+		}
+
+	case toolCompleteMsg:
+		// Remove from active tracking and update final result
+		if state, exists := m.activeToolCalls[msg.toolCallID]; exists {
+			delete(m.activeToolCalls, msg.toolCallID)
+
+			// Update the final message with completion status
+			if state.messageIndex >= 0 && state.messageIndex < len(m.messages) {
+				m.messages[state.messageIndex].toolSuccess = msg.success
+				m.messages[state.messageIndex].toolDuration = msg.duration
+				if !msg.success && msg.error != "" {
+					m.messages[state.messageIndex].text = msg.error
+				} else if msg.result != "" {
+					m.messages[state.messageIndex].text = msg.result
+				}
+				m.rebuildViewport()
+			}
+		}
 
 	case mainContextCancelledMsg:
 		logger.Get().Info("Main context cancelled, attempting to save chat history and quit TUI.")
@@ -479,28 +670,60 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		trimmed := strings.TrimSpace(botResponseText)
 		if strings.HasPrefix(trimmed, "{") {
 			if err := json.Unmarshal([]byte(botResponseText), &toolInvoke); err == nil && toolInvoke.Tool != "" {
+				// Parse tool parameters for display
+				var toolParams map[string]interface{}
+				json.Unmarshal(toolInvoke.Params, &toolParams)
+
+				// Add tool call message
+				toolCallID := fmt.Sprintf("call_%d", time.Now().UnixNano())
+				m.replacePlaceholder(chatMessage{
+					text:       "",
+					sender:     "Assistant",
+					timestamp:  time.Now(),
+					isToolCall: true,
+					toolName:   toolInvoke.Tool,
+					toolCallID: toolCallID,
+					toolParams: toolParams,
+				})
+
+				// Execute tool and add result
 				if tool, ok := m.toolRegistry.Get(toolInvoke.Tool); ok {
+					toolStartTime := time.Now()
 					result, toolErr := tool.Execute(m.parentCtx, toolInvoke.Params)
+					toolDuration := time.Since(toolStartTime)
+
+					var resultText string
+					var success bool
+
 					if toolErr != nil {
-						m.replacePlaceholder(chatMessage{
-							text:      fmt.Sprintf("Error executing tool %s: %v", toolInvoke.Tool, toolErr),
-							sender:    "System",
-							timestamp: time.Now(),
-						})
+						resultText = fmt.Sprintf("Error executing tool %s: %v", toolInvoke.Tool, toolErr)
+						success = false
 					} else {
 						resultJSON, _ := json.MarshalIndent(result, "", "  ")
-						m.replacePlaceholder(chatMessage{
-							text:       fmt.Sprintf("Tool %s result:\n```json\n%s\n```", toolInvoke.Tool, string(resultJSON)),
-							sender:     "System",
-							timestamp:  time.Now(),
-							isMarkdown: true,
-						})
+						resultText = string(resultJSON)
+						success = true
 					}
+
+					m.addMessage(chatMessage{
+						text:         resultText,
+						sender:       "System",
+						timestamp:    time.Now(),
+						isToolResult: true,
+						toolName:     toolInvoke.Tool,
+						toolCallID:   toolCallID,
+						toolSuccess:  success,
+						toolDuration: toolDuration,
+						isMarkdown:   success, // Format as markdown if successful
+					})
 				} else {
-					m.replacePlaceholder(chatMessage{
-						text:      fmt.Sprintf("Unknown tool requested: %s", toolInvoke.Tool),
-						sender:    "System",
-						timestamp: time.Now(),
+					m.addMessage(chatMessage{
+						text:         fmt.Sprintf("Unknown tool requested: %s", toolInvoke.Tool),
+						sender:       "System",
+						timestamp:    time.Now(),
+						isToolResult: true,
+						toolName:     toolInvoke.Tool,
+						toolCallID:   toolCallID,
+						toolSuccess:  false,
 					})
 				}
 				m.viewport.GotoBottom()
@@ -550,7 +773,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) rebuildViewport() {
 	var b strings.Builder
 	for _, cm := range m.messages {
-		if cm.isMarkdown && m.renderer != nil && strings.HasPrefix(cm.text, "Bot: ") {
+		// Handle tool call messages specially
+		if cm.isToolCall {
+			b.WriteString(m.formatToolCall(cm))
+		} else if cm.isToolResult {
+			b.WriteString(m.formatToolResult(cm))
+		} else if cm.isMarkdown && m.renderer != nil && strings.HasPrefix(cm.text, "Bot: ") {
 			raw := strings.TrimPrefix(cm.text, "Bot: ")
 			rendered, err := m.renderer.Render(raw)
 			if err != nil {
@@ -560,10 +788,35 @@ func (m *Model) rebuildViewport() {
 				b.WriteString("Bot: " + strings.TrimSpace(rendered))
 			}
 		} else {
-			b.WriteString(cm.text)
+			// Regular message formatting
+			if cm.sender != "" && cm.text != "" {
+				senderPrefix := m.senderStyle.Render(cm.sender + ": ")
+				timestamp := m.timeStyle.Render(cm.timestamp.Format("15:04:05"))
+
+				if cm.ThinkingTime > 0 {
+					thinkingTime := m.thinkingTimeStyle.Render(fmt.Sprintf(" (%.2fs)", cm.ThinkingTime.Seconds()))
+					b.WriteString(fmt.Sprintf("%s %s%s\n%s", senderPrefix, timestamp, thinkingTime, cm.text))
+				} else {
+					b.WriteString(fmt.Sprintf("%s %s\n%s", senderPrefix, timestamp, cm.text))
+				}
+			} else {
+				b.WriteString(cm.text)
+			}
 		}
-		b.WriteString("\n")
+		b.WriteString("\n\n") // Add spacing between messages
 	}
+
+	// Add active progress bars at the bottom
+	if len(m.activeToolCalls) > 0 {
+		b.WriteString("\n" + strings.Repeat("─", m.progressRenderer.width) + "\n")
+		b.WriteString("🔄 Active Operations:\n\n")
+
+		for _, state := range m.activeToolCalls {
+			progressDisplay := m.progressRenderer.RenderProgress(state)
+			b.WriteString(progressDisplay + "\n\n")
+		}
+	}
+
 	m.viewport.SetContent(b.String())
 	m.viewport.GotoBottom()
 }
@@ -775,7 +1028,24 @@ func (m Model) View() string {
 	} else if m.err != nil {
 		statusBar = m.errorStyle.Render("Error: " + m.err.Error())
 	} else {
-		statusBar = m.statusStyle.Render("Ctrl+C to quit. Ctrl+E to edit last. Tab for suggestions.")
+		// Enhanced status bar with more information
+		var statusParts []string
+
+		// Basic controls
+		statusParts = append(statusParts, "Ctrl+C: quit")
+		statusParts = append(statusParts, "Ctrl+E: edit last")
+		statusParts = append(statusParts, "Tab: suggestions")
+
+		// Active operations count
+		if len(m.activeToolCalls) > 0 {
+			statusParts = append(statusParts, fmt.Sprintf("Active: %d", len(m.activeToolCalls)))
+		}
+
+		// Session info
+		sessionDuration := time.Since(m.chatStartTime)
+		statusParts = append(statusParts, fmt.Sprintf("Session: %.0fm", sessionDuration.Minutes()))
+
+		statusBar = m.statusStyle.Render(strings.Join(statusParts, " | "))
 	}
 	view.WriteString("\n")
 	view.WriteString(statusBar)
@@ -794,6 +1064,60 @@ func (m *Model) LoadHistory(history *ChatHistory) {
 }
 
 // New: Helper function to format tool descriptions
+// formatToolCall formats a tool call message for display
+func (m *Model) formatToolCall(msg chatMessage) string {
+	var parts []string
+
+	// Tool call header with icon
+	header := fmt.Sprintf("🔧 Tool Call: %s", msg.toolName)
+	if msg.toolCallID != "" {
+		header += fmt.Sprintf(" (ID: %s)", msg.toolCallID[:8]) // Show first 8 chars of ID
+	}
+	parts = append(parts, m.toolCallStyle.Render(header))
+
+	// Tool parameters (if any)
+	if len(msg.toolParams) > 0 {
+		paramsJSON, _ := json.MarshalIndent(msg.toolParams, "", "  ")
+		paramText := fmt.Sprintf("Parameters:\n%s", string(paramsJSON))
+		parts = append(parts, m.toolParamsStyle.Render(paramText))
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// formatToolResult formats a tool result message for display
+func (m *Model) formatToolResult(msg chatMessage) string {
+	var parts []string
+
+	// Result header with status icon
+	var icon, header string
+	var style lipgloss.Style
+
+	if msg.toolSuccess {
+		icon = "✅"
+		header = fmt.Sprintf("%s Tool Result: %s", icon, msg.toolName)
+		style = m.toolSuccessStyle
+	} else {
+		icon = "❌"
+		header = fmt.Sprintf("%s Tool Error: %s", icon, msg.toolName)
+		style = m.toolErrorStyle
+	}
+
+	if msg.toolDuration > 0 {
+		header += fmt.Sprintf(" (%.2fs)", msg.toolDuration.Seconds())
+	}
+
+	parts = append(parts, style.Render(header))
+
+	// Result content
+	if msg.text != "" {
+		resultContent := m.toolResultStyle.Render(msg.text)
+		parts = append(parts, resultContent)
+	}
+
+	return strings.Join(parts, "\n")
+}
+
 func formatToolDescriptions(tools []map[string]interface{}) string {
 	var sb strings.Builder
 	for _, tool := range tools {

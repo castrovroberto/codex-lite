@@ -153,7 +153,8 @@ func (t *ShellRunTool) Execute(ctx context.Context, params json.RawMessage) (*To
 	result := map[string]interface{}{
 		"command":           p.Command,
 		"working_directory": p.WorkingDirectory,
-		"output":            string(output),
+		"stdout":            string(output),
+		"stderr":            "", // We use CombinedOutput, so stderr is included in stdout
 		"success":           success,
 		"exit_code":         exitCode,
 	}
@@ -162,10 +163,12 @@ func (t *ShellRunTool) Execute(ctx context.Context, params json.RawMessage) (*To
 		result["error_message"] = errorMsg
 	}
 
+	// Tool execution always succeeds, even if the command fails
+	// The command's success/failure is indicated by the exit_code and success fields
 	return &ToolResult{
-		Success: success,
+		Success: true,
 		Data:    result,
-		Error:   errorMsg,
+		Error:   "",
 	}, nil
 }
 

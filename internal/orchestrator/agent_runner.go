@@ -81,12 +81,14 @@ func ReviewRunConfig() *RunConfig {
 
 // AgentRunner manages the orchestration between LLM and tools
 type AgentRunner struct {
-	llmClient     llm.Client
-	toolRegistry  *agent.Registry
-	systemPrompt  string
-	maxIterations int
-	model         string
-	config        *RunConfig // Add configuration
+	llmClient      llm.Client
+	toolRegistry   *agent.Registry
+	systemPrompt   string
+	maxIterations  int
+	model          string
+	config         *RunConfig // Add configuration
+	sessionManager *SessionManager
+	currentSession *SessionState
 }
 
 // NewAgentRunner creates a new agent runner
@@ -101,6 +103,19 @@ func NewAgentRunner(llmClient llm.Client, toolRegistry *agent.Registry, systemPr
 	}
 }
 
+// NewAgentRunnerWithSession creates a new agent runner with session management
+func NewAgentRunnerWithSession(llmClient llm.Client, toolRegistry *agent.Registry, systemPrompt string, model string, sessionManager *SessionManager) *AgentRunner {
+	return &AgentRunner{
+		llmClient:      llmClient,
+		toolRegistry:   toolRegistry,
+		systemPrompt:   systemPrompt,
+		maxIterations:  10, // Default max iterations
+		model:          model,
+		config:         DefaultRunConfig(),
+		sessionManager: sessionManager,
+	}
+}
+
 // SetConfig sets the run configuration
 func (ar *AgentRunner) SetConfig(config *RunConfig) {
 	ar.config = config
@@ -109,6 +124,11 @@ func (ar *AgentRunner) SetConfig(config *RunConfig) {
 
 // Run executes the agent orchestration loop
 func (ar *AgentRunner) Run(ctx context.Context, initialPrompt string) (*RunResult, error) {
+	return ar.RunWithCommand(ctx, initialPrompt, "unknown")
+}
+
+// RunWithCommand executes the agent orchestration loop with command tracking
+func (ar *AgentRunner) RunWithCommand(ctx context.Context, initialPrompt string, command string) (*RunResult, error) {
 	log := contextkeys.LoggerFromContext(ctx)
 
 	// Apply timeout from configuration
@@ -118,16 +138,47 @@ func (ar *AgentRunner) Run(ctx context.Context, initialPrompt string) (*RunResul
 		defer cancel()
 	}
 
+	// Initialize or resume session
+	if ar.sessionManager != nil && ar.currentSession == nil {
+		ar.currentSession = ar.sessionManager.CreateSession(ar.systemPrompt, ar.model, command, ar.config)
+		log.Info("Created new session", "session_id", ar.currentSession.SessionID)
+	}
+
 	// Initialize message history
 	messages := []Message{
 		{Role: "system", Content: ar.systemPrompt},
 		{Role: "user", Content: initialPrompt},
 	}
 
+	// If resuming a session, load existing messages
+	if ar.currentSession != nil && len(ar.currentSession.Messages) > 0 {
+		messages = ar.currentSession.Messages
+		// Add new user prompt if different from last message
+		if len(messages) == 0 || messages[len(messages)-1].Content != initialPrompt {
+			messages = append(messages, Message{Role: "user", Content: initialPrompt})
+		}
+	}
+
 	toolCalls := 0
 	iterations := 0
 
-	log.Info("Starting agent orchestration", "max_iterations", ar.maxIterations)
+	// Count existing tool calls if resuming
+	if ar.currentSession != nil {
+		toolCalls = len(ar.currentSession.ToolCalls)
+		// Estimate iterations from message history
+		for _, msg := range messages {
+			if msg.Role == "assistant" {
+				iterations++
+			}
+		}
+	}
+
+	log.Info("Starting agent orchestration", "max_iterations", ar.maxIterations, "session_id", func() string {
+		if ar.currentSession != nil {
+			return ar.currentSession.SessionID
+		}
+		return "none"
+	}())
 
 	// Main orchestration loop
 	for iterations < ar.maxIterations {
@@ -169,6 +220,16 @@ func (ar *AgentRunner) Run(ctx context.Context, initialPrompt string) (*RunResul
 			// Check if this looks like a final answer
 			if ar.isFinalAnswer(response.TextContent, iterations) {
 				log.Info("Agent orchestration completed", "iterations", iterations, "tool_calls", toolCalls)
+
+				// Update session state if available
+				if ar.sessionManager != nil && ar.currentSession != nil {
+					ar.sessionManager.UpdateSessionState(ar.currentSession, "completed")
+					ar.currentSession.Messages = messages
+					if err := ar.sessionManager.SaveSession(ar.currentSession); err != nil {
+						log.Warn("Failed to save final session state", "error", err)
+					}
+				}
+
 				return &RunResult{
 					FinalResponse: response.TextContent,
 					Messages:      messages,
@@ -191,10 +252,25 @@ func (ar *AgentRunner) Run(ctx context.Context, initialPrompt string) (*RunResul
 				ToolCall: functionCall,
 			})
 
-			// Execute the tool
+			// Execute the tool with timing
+			toolStartTime := time.Now()
 			toolResult, err := ar.executeTool(ctx, functionCall)
+			toolDuration := time.Since(toolStartTime)
+
+			// Create tool call record for session tracking
+			toolCallRecord := ToolCallRecord{
+				ID:         functionCall.ID,
+				Timestamp:  toolStartTime,
+				ToolName:   functionCall.Name,
+				Parameters: functionCall.Arguments,
+				Duration:   toolDuration,
+				Success:    err == nil && toolResult != nil && toolResult.Success,
+				Iteration:  iterations,
+			}
+
 			if err != nil {
 				log.Error("Tool execution failed", "tool", functionCall.Name, "error", err)
+				toolCallRecord.Error = err.Error()
 
 				// Add error message to history
 				messages = append(messages, Message{
@@ -203,24 +279,50 @@ func (ar *AgentRunner) Run(ctx context.Context, initialPrompt string) (*RunResul
 					ToolCallID: functionCall.ID,
 					Name:       functionCall.Name,
 				})
-				continue
+			} else {
+				// Add tool result to message history
+				resultContent := ar.formatToolResult(toolResult)
+				messages = append(messages, Message{
+					Role:       "tool",
+					Content:    resultContent,
+					ToolCallID: functionCall.ID,
+					Name:       functionCall.Name,
+				})
+
+				// Store tool result in record
+				toolCallRecord.Result = &ToolCallResult{
+					Success: toolResult.Success,
+					Data:    toolResult.Data,
+					Error:   toolResult.Error,
+				}
+
+				log.Debug("Tool executed successfully", "tool", functionCall.Name, "success", toolResult.Success)
 			}
 
-			// Add tool result to message history
-			resultContent := ar.formatToolResult(toolResult)
-			messages = append(messages, Message{
-				Role:       "tool",
-				Content:    resultContent,
-				ToolCallID: functionCall.ID,
-				Name:       functionCall.Name,
-			})
-
-			log.Debug("Tool executed successfully", "tool", functionCall.Name, "success", toolResult.Success)
+			// Add tool call to session if session manager is available
+			if ar.sessionManager != nil && ar.currentSession != nil {
+				ar.sessionManager.AddToolCall(ar.currentSession, toolCallRecord)
+				// Update session messages
+				ar.currentSession.Messages = messages
+				// Save session state periodically
+				if err := ar.sessionManager.SaveSession(ar.currentSession); err != nil {
+					log.Warn("Failed to save session state", "error", err)
+				}
+			}
 		}
 	}
 
 	// Max iterations reached
 	log.Warn("Agent orchestration reached max iterations", "max_iterations", ar.maxIterations)
+
+	// Update session state if available
+	if ar.sessionManager != nil && ar.currentSession != nil {
+		ar.sessionManager.UpdateSessionState(ar.currentSession, "failed")
+		ar.currentSession.Messages = messages
+		if err := ar.sessionManager.SaveSession(ar.currentSession); err != nil {
+			log.Warn("Failed to save failed session state", "error", err)
+		}
+	}
 
 	// Try to get a final response from the last assistant message
 	finalResponse := ""
@@ -381,6 +483,60 @@ func (ar *AgentRunner) isFinalAnswer(content string, iteration int) bool {
 
 // GetMessageHistory returns the current message history
 func (ar *AgentRunner) GetMessageHistory() []Message {
-	// This would be populated during Run() - for now return empty
+	if ar.currentSession != nil {
+		return ar.currentSession.Messages
+	}
 	return []Message{}
+}
+
+// ResumeSession resumes an existing session
+func (ar *AgentRunner) ResumeSession(sessionID string) error {
+	if ar.sessionManager == nil {
+		return fmt.Errorf("session manager not available")
+	}
+
+	session, err := ar.sessionManager.LoadSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to load session: %w", err)
+	}
+
+	// Validate session compatibility
+	if session.Model != ar.model {
+		return fmt.Errorf("session model (%s) does not match current model (%s)", session.Model, ar.model)
+	}
+
+	if session.SystemPrompt != ar.systemPrompt {
+		return fmt.Errorf("session system prompt does not match current system prompt")
+	}
+
+	// Update session state to running if it was paused
+	if session.CurrentState == "paused" {
+		ar.sessionManager.UpdateSessionState(session, "running")
+	}
+
+	ar.currentSession = session
+	return nil
+}
+
+// PauseSession pauses the current session
+func (ar *AgentRunner) PauseSession() error {
+	if ar.sessionManager == nil || ar.currentSession == nil {
+		return fmt.Errorf("no active session to pause")
+	}
+
+	ar.sessionManager.UpdateSessionState(ar.currentSession, "paused")
+	return ar.sessionManager.SaveSession(ar.currentSession)
+}
+
+// GetCurrentSessionID returns the current session ID
+func (ar *AgentRunner) GetCurrentSessionID() string {
+	if ar.currentSession != nil {
+		return ar.currentSession.SessionID
+	}
+	return ""
+}
+
+// GetSessionState returns the current session state
+func (ar *AgentRunner) GetSessionState() *SessionState {
+	return ar.currentSession
 }

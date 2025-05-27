@@ -69,6 +69,8 @@ func (tf *ToolFactory) CreateReviewRegistry() *Registry {
 	registry.Register(NewGitCommitTool(tf.workspaceRoot))
 	registry.Register(NewTestRunnerTool(tf.workspaceRoot))
 	registry.Register(NewLintRunnerTool(tf.workspaceRoot))
+	registry.Register(NewParseTestResultsTool(tf.workspaceRoot))
+	registry.Register(NewParseLintResultsTool(tf.workspaceRoot))
 
 	return registry
 }
@@ -93,6 +95,8 @@ func (tf *ToolFactory) registerCoreTool(registry *Registry) {
 		NewGitCommitTool(tf.workspaceRoot),
 		NewTestRunnerTool(tf.workspaceRoot),
 		NewLintRunnerTool(tf.workspaceRoot),
+		NewParseTestResultsTool(tf.workspaceRoot),
+		NewParseLintResultsTool(tf.workspaceRoot),
 	}
 
 	for _, tool := range tools {
@@ -116,5 +120,7 @@ func (tf *ToolFactory) GetAvailableToolNames() []string {
 		"git_commit",
 		"run_tests",
 		"run_linter",
+		"parse_test_results",
+		"parse_lint_results",
 	}
 }

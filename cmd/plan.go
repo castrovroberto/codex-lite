@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/audit"
 	"github.com/castrovroberto/CGE/internal/config"
 	cgecontext "github.com/castrovroberto/CGE/internal/context"
 	"github.com/castrovroberto/CGE/internal/contextkeys"
@@ -232,6 +233,20 @@ func validatePlan(plan *Plan) error {
 
 // generatePlanWithOrchestrator uses the agent orchestrator to generate a plan
 func generatePlanWithOrchestrator(ctx context.Context, userGoal string, contextInfo interface{}, llmClient llm.Client, workspaceRoot string, cfg interface{}, logger interface{}) error {
+	// Initialize audit logger for session tracking
+	auditLogger, err := audit.NewAuditLogger(workspaceRoot, "plan")
+	if err != nil {
+		// Continue without audit logging if it fails
+		fmt.Printf("Warning: Failed to initialize audit logger: %v\n", err)
+	}
+	defer func() {
+		if auditLogger != nil {
+			auditLogger.Close()
+		}
+	}()
+
+	// TODO: Integrate session manager with planning command in future iteration
+
 	// Initialize tool registry with planning tools
 	toolFactory := agent.NewToolFactory(workspaceRoot)
 	toolRegistry := toolFactory.CreatePlanningRegistry()
@@ -244,6 +259,9 @@ func generatePlanWithOrchestrator(ctx context.Context, userGoal string, contextI
 		Model:           cfg.(*config.AppConfig).LLM.Model, // Type assertion needed
 		CodebaseContext: contextInfo,
 	}
+
+	// Log the planning session start
+	fmt.Printf("Starting planning session...\n")
 
 	planResponse, err := integrator.ExecutePlan(ctx, planRequest)
 	if err != nil {

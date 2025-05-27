@@ -61,6 +61,15 @@ func (t *CodeSearchTool) Execute(ctx context.Context, params json.RawMessage) (*
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
+	// Validate that the query field exists (check the raw JSON)
+	var rawParams map[string]interface{}
+	if err := json.Unmarshal(params, &rawParams); err != nil {
+		return nil, fmt.Errorf("invalid parameters: %w", err)
+	}
+	if _, exists := rawParams["query"]; !exists {
+		return nil, fmt.Errorf("missing required parameter: query")
+	}
+
 	// Get all files to search in
 	var matches []map[string]interface{}
 	err := filepath.WalkDir(t.workspaceRoot, func(path string, d fs.DirEntry, err error) error {
@@ -170,7 +179,7 @@ func calculateRelevance(content, query string) float64 {
 			}
 		}
 	}
-	score += float64(wordMatches) / float64(len(queryWords)) * 0.5
+	score += float64(wordMatches) / float64(len(queryWords)) * 1.0
 
 	// Substring matches
 	substringMatches := 0
@@ -251,11 +260,11 @@ func (t *FileReadTool) Parameters() json.RawMessage {
 				"type": "string",
 				"description": "The path of the file to read"
 			},
-			"start_line": {
+			"start_line_one_indexed": {
 				"type": "integer",
 				"description": "The line number to start reading from (1-based)"
 			},
-			"end_line": {
+			"end_line_one_indexed_inclusive": {
 				"type": "integer",
 				"description": "The line number to end reading at (1-based, inclusive)"
 			}
@@ -266,14 +275,23 @@ func (t *FileReadTool) Parameters() json.RawMessage {
 
 type FileReadParams struct {
 	TargetFile string `json:"target_file"`
-	StartLine  int    `json:"start_line,omitempty"`
-	EndLine    int    `json:"end_line,omitempty"`
+	StartLine  int    `json:"start_line_one_indexed,omitempty"`
+	EndLine    int    `json:"end_line_one_indexed_inclusive,omitempty"`
 }
 
 func (t *FileReadTool) Execute(ctx context.Context, params json.RawMessage) (*ToolResult, error) {
 	var p FileReadParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)
+	}
+
+	// Validate that the target_file field exists (check the raw JSON)
+	var rawParams map[string]interface{}
+	if err := json.Unmarshal(params, &rawParams); err != nil {
+		return nil, fmt.Errorf("invalid parameters: %w", err)
+	}
+	if _, exists := rawParams["target_file"]; !exists {
+		return nil, fmt.Errorf("missing required parameter: target_file")
 	}
 
 	// Resolve file path
@@ -291,10 +309,51 @@ func (t *FileReadTool) Execute(ctx context.Context, params json.RawMessage) (*To
 		}, nil
 	}
 
+	// Handle line range if specified
+	contentStr := string(content)
+	if p.StartLine > 0 || p.EndLine > 0 {
+		lines := strings.Split(contentStr, "\n")
+
+		// Validate line range
+		if p.StartLine > 0 && p.EndLine > 0 && p.StartLine > p.EndLine {
+			return &ToolResult{
+				Success: false,
+				Error:   "invalid range: start_line must be less than or equal to end_line",
+			}, nil
+		}
+
+		// Convert to 0-based indexing and apply range
+		startIdx := 0
+		if p.StartLine > 0 {
+			startIdx = p.StartLine - 1
+		}
+
+		endIdx := len(lines)
+		if p.EndLine > 0 {
+			endIdx = p.EndLine
+		}
+
+		// Validate bounds
+		if startIdx >= len(lines) {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("start_line %d exceeds file length %d", p.StartLine, len(lines)),
+			}, nil
+		}
+
+		if endIdx > len(lines) {
+			endIdx = len(lines)
+		}
+
+		// Extract the specified range
+		selectedLines := lines[startIdx:endIdx]
+		contentStr = strings.Join(selectedLines, "\n")
+	}
+
 	return &ToolResult{
 		Success: true,
 		Data: map[string]interface{}{
-			"content": string(content),
+			"content": contentStr,
 		},
 	}, nil
 }

@@ -559,7 +559,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case mainContextCancelledMsg:
-		logger.Get().Info("Main context cancelled, attempting to save chat history and quit TUI.")
+		logger.Get().Info("Main context canceled, attempting to save chat history and quit TUI.")
 		if err := m.SaveHistory(); err != nil {
 			m.err = fmt.Errorf("error saving history on context cancellation: %w", err)
 			logger.Get().Error("Failed to save chat history on context cancellation", "error", err, "sessionID", m.sessionID)

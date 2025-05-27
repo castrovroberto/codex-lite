@@ -18,7 +18,7 @@ User Goal: {{.UserGoal}}
 Use function calls to gather context before planning.`
 
 	templatePath := filepath.Join(tempDir, "plan.tmpl")
-	err := os.WriteFile(templatePath, []byte(planTemplate), 0644)
+	err := os.WriteFile(templatePath, []byte(planTemplate), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write test template: %v", err)
 	}
@@ -53,7 +53,7 @@ Use function calls for file operations.
 Safety guidelines apply.`
 
 	templatePath := filepath.Join(tempDir, "generate.tmpl")
-	err := os.WriteFile(templatePath, []byte(generateTemplate), 0644)
+	err := os.WriteFile(templatePath, []byte(generateTemplate), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write test template: %v", err)
 	}
@@ -85,7 +85,7 @@ Use function calls to analyze and fix.
 Follow the workflow guidelines.`
 
 	templatePath := filepath.Join(tempDir, "review.tmpl")
-	err := os.WriteFile(templatePath, []byte(reviewTemplate), 0644)
+	err := os.WriteFile(templatePath, []byte(reviewTemplate), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write test template: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestRenderWithTools(t *testing.T) {
 Safety guidelines: {{len .SafetyGuidelines}}`
 
 	templatePath := filepath.Join(tempDir, "test.tmpl")
-	err := os.WriteFile(templatePath, []byte(template), 0644)
+	err := os.WriteFile(templatePath, []byte(template), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write test template: %v", err)
 	}
@@ -213,7 +213,7 @@ Max iterations: {{.MaxIterations}}
 Guidelines: {{len .SafetyGuidelines}}`
 
 	templatePath := filepath.Join(tempDir, "test.tmpl")
-	err := os.WriteFile(templatePath, []byte(template), 0644)
+	err := os.WriteFile(templatePath, []byte(template), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write test template: %v", err)
 	}

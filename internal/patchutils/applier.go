@@ -119,7 +119,7 @@ func (pa *PatchApplier) ApplyPatch(filePath, patchContent string) (*ApplyResult,
 	if pa.options.CreateBackup && !pa.options.DryRun {
 		timestamp := time.Now().Unix()
 		backupPath = fmt.Sprintf("%s%s.%d", cleanPath, pa.options.BackupSuffix, timestamp)
-		if err := os.WriteFile(backupPath, originalContent, 0644); err != nil {
+		if err := os.WriteFile(backupPath, originalContent, 0600); err != nil {
 			result.Error = fmt.Sprintf("failed to create backup: %v", err)
 			return result, fmt.Errorf(result.Error)
 		}
@@ -143,10 +143,10 @@ func (pa *PatchApplier) ApplyPatch(filePath, patchContent string) (*ApplyResult,
 
 	// Write patched content (unless dry run)
 	if !pa.options.DryRun {
-		if err := os.WriteFile(cleanPath, []byte(patchedContent), 0644); err != nil {
+		if err := os.WriteFile(cleanPath, []byte(patchedContent), 0600); err != nil {
 			// Try to restore from backup on write failure
 			if backupPath != "" {
-				os.WriteFile(cleanPath, originalContent, 0644)
+				os.WriteFile(cleanPath, originalContent, 0600)
 				os.Remove(backupPath)
 			}
 			result.Error = fmt.Sprintf("failed to write patched file: %v", err)
@@ -287,7 +287,7 @@ func (pa *PatchApplier) rollbackPatches(filePaths []string) {
 		// Use the most recent backup
 		backupPath := matches[len(matches)-1]
 		if backupContent, err := os.ReadFile(backupPath); err == nil {
-			os.WriteFile(fullPath, backupContent, 0644)
+			os.WriteFile(fullPath, backupContent, 0600)
 			os.Remove(backupPath) // Clean up backup after restore
 		}
 	}

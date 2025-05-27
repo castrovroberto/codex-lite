@@ -17,8 +17,14 @@ test-integration: ## Run integration tests
 test-all: test test-integration ## Run all tests
 
 # Code quality targets
-lint: ## Run golangci-lint
+lint: ## Run golangci-lint (full)
 	golangci-lint run --timeout=5m
+
+lint-fast: ## Run golangci-lint (fast configuration)
+	golangci-lint run --config .golangci-fast.yml --timeout=2m
+
+lint-essential: ## Run golangci-lint (essential linters only)
+	golangci-lint run --config .golangci-essential.yml --timeout=1m
 
 fmt: ## Format code
 	gofmt -s -w .
@@ -86,9 +92,9 @@ ci-test: ## Run tests like CI
 	@echo "Running integration tests..."
 	go test -v -tags=integration ./tests/integration/... | tee integration-test-results.log
 
-ci-lint: ## Run linting like CI
-	@echo "Running golangci-lint..."
-	golangci-lint run --timeout=5m
+ci-lint: ## Run linting like CI (fast)
+	@echo "Running golangci-lint (fast)..."
+	golangci-lint run --config .golangci-fast.yml --timeout=2m
 	@echo "Running go vet..."
 	go vet ./...
 	@echo "Checking formatting..."
@@ -104,4 +110,15 @@ ci-security: ## Run security scans like CI
 	@echo "Running govulncheck..."
 	govulncheck ./...
 
-ci-all: ci-test ci-lint ci-security build ## Run all CI checks locally 
+ci-all: ci-test ci-lint ci-security build ## Run all CI checks locally
+
+# Lint fix targets
+lint-fix-quick: ## Apply quick and easy lint fixes (formatting, spelling, etc.)
+	@echo "🔧 Applying quick lint fixes..."
+	@./scripts/quick-lint-fixes.sh
+
+lint-fix-security: ## Apply automated security fixes (file permissions)
+	@echo "🔒 Applying security fixes..."
+	@./scripts/security-fixes.sh
+
+lint-fix-all: lint-fix-quick lint-fix-security ## Apply all automated lint fixes 

@@ -115,7 +115,7 @@ Example:
 			logger.Error("Generated plan has invalid structure", "error", err)
 			// Save raw response for debugging
 			rawPlanPath := "failed_orchestrated_plan_raw_output.txt"
-			_ = os.WriteFile(rawPlanPath, planJSON, 0644)
+			_ = os.WriteFile(rawPlanPath, planJSON, 0600)
 			logger.Info("Raw plan response saved for debugging.", "path", rawPlanPath)
 			return fmt.Errorf("generated plan has invalid structure: %w. Raw response saved to %s", err, rawPlanPath)
 		}
@@ -139,7 +139,7 @@ Example:
 		}
 
 		// 7. Save plan to file
-		if err := os.WriteFile(outputFilePlanOrchestrated, finalPlanJSON, 0644); err != nil {
+		if err := os.WriteFile(outputFilePlanOrchestrated, finalPlanJSON, 0600); err != nil {
 			logger.Error("Failed to write plan to file", "path", outputFilePlanOrchestrated, "error", err)
 			return fmt.Errorf("failed to write plan to %s: %w", outputFilePlanOrchestrated, err)
 		}
@@ -147,7 +147,7 @@ Example:
 		// 8. Save conversation history for debugging
 		historyPath := filepath.Join(filepath.Dir(outputFilePlanOrchestrated), "plan_conversation_history.json")
 		historyJSON, _ := json.MarshalIndent(planResponse.Messages, "", "  ")
-		_ = os.WriteFile(historyPath, historyJSON, 0644)
+		_ = os.WriteFile(historyPath, historyJSON, 0600)
 
 		logger.Info("Orchestrated plan generated successfully!", "path", outputFilePlanOrchestrated, "tool_calls", len(planResponse.Messages))
 		fmt.Printf("Orchestrated plan generated and saved to %s\n", outputFilePlanOrchestrated)

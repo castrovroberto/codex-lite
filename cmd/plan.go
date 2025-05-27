@@ -150,7 +150,7 @@ Example:
 			logger.Error("Failed to parse LLM response into Plan struct", "error", err, "response", llmResponse)
 			// Attempt to save the raw response for debugging if JSON parsing fails
 			rawPlanPath := "failed_plan_raw_output.txt"
-			_ = os.WriteFile(rawPlanPath, []byte(llmResponse), 0644)
+			_ = os.WriteFile(rawPlanPath, []byte(llmResponse), 0600)
 			logger.Info("Raw LLM response saved for debugging.", "path", rawPlanPath)
 			return fmt.Errorf("failed to parse LLM JSON response: %w. Raw response saved to %s", err, rawPlanPath)
 		}
@@ -173,7 +173,7 @@ Example:
 			return fmt.Errorf("failed to marshal plan to JSON: %w", err)
 		}
 
-		if err := os.WriteFile(outputFilePlan, planJSON, 0644); err != nil {
+		if err := os.WriteFile(outputFilePlan, planJSON, 0600); err != nil {
 			logger.Error("Failed to write plan to file", "path", outputFilePlan, "error", err)
 			return fmt.Errorf("failed to write plan to %s: %w", outputFilePlan, err)
 		}
@@ -283,7 +283,7 @@ func generatePlanWithOrchestrator(ctx context.Context, userGoal string, contextI
 	if err := json.Unmarshal(planJSON, &generatedPlan); err != nil {
 		// Save raw response for debugging
 		rawPlanPath := "failed_orchestrated_plan_raw_output.txt"
-		_ = os.WriteFile(rawPlanPath, planJSON, 0644)
+		_ = os.WriteFile(rawPlanPath, planJSON, 0600)
 		return fmt.Errorf("generated plan has invalid structure: %w. Raw response saved to %s", err, rawPlanPath)
 	}
 
@@ -304,14 +304,14 @@ func generatePlanWithOrchestrator(ctx context.Context, userGoal string, contextI
 	}
 
 	// Save plan to file
-	if err := os.WriteFile(outputFilePlan, finalPlanJSON, 0644); err != nil {
+	if err := os.WriteFile(outputFilePlan, finalPlanJSON, 0600); err != nil {
 		return fmt.Errorf("failed to write plan to %s: %w", outputFilePlan, err)
 	}
 
 	// Save conversation history for debugging
 	historyPath := filepath.Join(filepath.Dir(outputFilePlan), "plan_conversation_history.json")
 	historyJSON, _ := json.MarshalIndent(planResponse.Messages, "", "  ")
-	_ = os.WriteFile(historyPath, historyJSON, 0644)
+	_ = os.WriteFile(historyPath, historyJSON, 0600)
 
 	fmt.Printf("Orchestrated plan generated and saved to %s\n", outputFilePlan)
 	fmt.Printf("Conversation history saved to %s\n", historyPath)

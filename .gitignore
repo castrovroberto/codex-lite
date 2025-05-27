@@ -53,6 +53,11 @@ govulncheck.json
 # golangci-lint cache
 .golangci-lint-cache
 
+# Linting configuration files (keep in repo)
+# .golangci.yml
+# .golangci-fast.yml  
+# .golangci-essential.yml
+
 # IDE and editor files
 .vscode/
 .idea/

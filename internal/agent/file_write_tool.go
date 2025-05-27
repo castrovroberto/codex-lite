@@ -110,7 +110,7 @@ func (t *FileWriteTool) Execute(ctx context.Context, params json.RawMessage) (*T
 	// Create parent directories if needed
 	if p.CreateDirsIfNeeded {
 		dir := filepath.Dir(cleanPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			return &ToolResult{
 				Success: false,
 				Error:   fmt.Sprintf("failed to create directories: %v", err),
@@ -119,7 +119,7 @@ func (t *FileWriteTool) Execute(ctx context.Context, params json.RawMessage) (*T
 	}
 
 	// Write the file
-	if err := os.WriteFile(cleanPath, []byte(p.Content), 0644); err != nil {
+	if err := os.WriteFile(cleanPath, []byte(p.Content), 0600); err != nil {
 		return &ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("failed to write file: %v", err),

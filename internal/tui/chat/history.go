@@ -57,7 +57,7 @@ func (m *Model) SaveHistory() error {
 
 	// Create history directory if it doesn't exist
 	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
-	if err := os.MkdirAll(historyDir, 0755); err != nil {
+	if err := os.MkdirAll(historyDir, 0750); err != nil {
 		return fmt.Errorf("failed to create history directory: %w", err)
 	}
 
@@ -72,7 +72,7 @@ func (m *Model) SaveHistory() error {
 	}
 
 	// Write to file
-	if err := os.WriteFile(filepath, data, 0644); err != nil {
+	if err := os.WriteFile(filepath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write chat history: %w", err)
 	}
 
@@ -102,7 +102,7 @@ func ListChatSessions() ([]string, error) {
 	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
 
 	// Create directory if it doesn't exist
-	if err := os.MkdirAll(historyDir, 0755); err != nil {
+	if err := os.MkdirAll(historyDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create history directory: %w", err)
 	}
 

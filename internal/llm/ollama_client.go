@@ -110,7 +110,7 @@ func (oc *OllamaClient) Generate(ctx context.Context, modelName, prompt string, 
 	for i := 0; i <= maxRetries; i++ {
 		select {
 		case <-ctx.Done():
-			log.Info("Context cancelled before Ollama request attempt", "attempt", i)
+			log.Info("Context canceled before Ollama request attempt", "attempt", i)
 			return "", ctx.Err()
 		default:
 		}
@@ -265,7 +265,7 @@ func (oc *OllamaClient) Stream(ctx context.Context, modelName, prompt string, sy
 		select {
 		case out <- ollamaResp.Response:
 		case <-ctx.Done():
-			log.Info("Context cancelled during Ollama stream processing")
+			log.Info("Context canceled during Ollama stream processing")
 			return ctx.Err()
 		}
 

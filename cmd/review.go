@@ -356,7 +356,7 @@ func applyLLMFixes(ctx context.Context, result *ReviewResult, llmClient llm.Clie
 	if err := json.Unmarshal([]byte(llmResponse), &response); err != nil {
 		// Save raw response for debugging
 		rawPath := "failed_review_fixes_raw.txt"
-		_ = os.WriteFile(rawPath, []byte(llmResponse), 0644)
+		_ = os.WriteFile(rawPath, []byte(llmResponse), 0600)
 		fmt.Printf("⚠️  Failed to parse LLM response. Raw response saved to %s\n", rawPath)
 		return fmt.Errorf("failed to parse LLM JSON response: %w", err)
 	}
@@ -376,11 +376,11 @@ func applyLLMFixes(ctx context.Context, result *ReviewResult, llmClient llm.Clie
 			// Create backup
 			backupPath := fullPath + ".backup"
 			if originalContent, err := os.ReadFile(fullPath); err == nil {
-				_ = os.WriteFile(backupPath, originalContent, 0644)
+				_ = os.WriteFile(backupPath, originalContent, 0600)
 			}
 
 			// Apply fix
-			if err := os.WriteFile(fullPath, []byte(fix.Content), 0644); err != nil {
+			if err := os.WriteFile(fullPath, []byte(fix.Content), 0600); err != nil {
 				fmt.Printf("❌ Failed to apply fix to %s: %v\n", fix.FilePath, err)
 				continue
 			}

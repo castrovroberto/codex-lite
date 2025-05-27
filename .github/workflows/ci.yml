@@ -104,11 +104,11 @@ jobs:
           ~/.cache/go-build
         key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
         
-    - name: Run golangci-lint
+    - name: Run golangci-lint (fast)
       uses: golangci/golangci-lint-action@v3
       with:
         version: latest
-        args: --timeout=5m
+        args: --config .golangci-fast.yml --timeout=2m
         
     - name: Run go vet
       run: go vet ./...

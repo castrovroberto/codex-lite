@@ -76,11 +76,11 @@ func (w *TestWorkspace) CreateFile(relativePath, content string) {
 	fullPath := filepath.Join(w.Dir, relativePath)
 	dir := filepath.Dir(fullPath)
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		w.T.Fatalf("Failed to create directory %s: %v", dir, err)
 	}
 
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(fullPath, []byte(content), 0600); err != nil {
 		w.T.Fatalf("Failed to create file %s: %v", fullPath, err)
 	}
 }
@@ -88,7 +88,7 @@ func (w *TestWorkspace) CreateFile(relativePath, content string) {
 // CreateDir creates a directory in the workspace
 func (w *TestWorkspace) CreateDir(relativePath string) {
 	fullPath := filepath.Join(w.Dir, relativePath)
-	if err := os.MkdirAll(fullPath, 0755); err != nil {
+	if err := os.MkdirAll(fullPath, 0750); err != nil {
 		w.T.Fatalf("Failed to create directory %s: %v", fullPath, err)
 	}
 }

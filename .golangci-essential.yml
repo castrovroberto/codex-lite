@@ -1,0 +1,49 @@
+run:
+  timeout: 1m
+  go: "1.23"
+  modules-download-mode: readonly
+
+linters-settings:
+  govet:
+    check-shadowing: false
+  lll:
+    line-length: 140
+  goimports:
+    local-prefixes: github.com/castrovroberto/CGE
+
+linters:
+  disable-all: true
+  enable:
+    # Critical linters only (fastest, highest value)
+    - errcheck      # Unchecked errors (critical)
+    - gosimple      # Code simplification (fast)
+    - govet         # Go vet without expensive checks (essential)
+    - staticcheck   # Static analysis (important)
+    - typecheck     # Type checking (essential)
+    - unused        # Dead code (fast)
+    - gofmt         # Formatting (fast)
+    - goimports     # Import formatting (fast)
+
+issues:
+  exclude-rules:
+    # Skip linting for test files and examples to save time
+    - path: _test\.go
+      linters:
+        - errcheck
+    - path: internal/agent/testing/
+      linters:
+        - errcheck
+    - path: examples/
+      linters:
+        - errcheck
+  
+  exclude:
+    # Exclude common false positives to reduce noise
+    - "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*printf?|os\\.(Un)?Setenv). is not checked"
+  
+  exclude-use-default: false
+  max-issues-per-linter: 20  # Limit to most critical issues
+  max-same-issues: 5         # Reduce duplicate reporting
+
+service:
+  golangci-lint-version: 1.64.x 

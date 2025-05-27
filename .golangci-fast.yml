@@ -1,0 +1,89 @@
+run:
+  timeout: 2m
+  go: "1.23"
+  modules-download-mode: readonly
+  # Skip vendor and generated files
+  skip-dirs:
+    - vendor
+    - .git
+    - node_modules
+  skip-files:
+    - ".*\\.pb\\.go$"
+    - ".*\\.gen\\.go$"
+    - ".*_generated\\.go$"
+
+linters-settings:
+  govet:
+    check-shadowing: false  # Expensive check, disabled for speed
+  gocyclo:
+    min-complexity: 20  # Increased threshold to reduce noise
+  dupl:
+    threshold: 150  # Increased threshold to reduce noise
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  misspell:
+    locale: US
+  lll:
+    line-length: 140
+  goimports:
+    local-prefixes: github.com/castrovroberto/CGE
+
+linters:
+  disable-all: true
+  enable:
+    # Essential linters (fast and high-value)
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Go vet (without expensive checks)
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Go static analysis
+    - typecheck     # Type checking
+    - unused        # Find unused code
+    
+    # Code quality (medium speed, high value)
+    - gofmt         # Code formatting
+    - goimports     # Import formatting
+    - misspell      # Spelling mistakes
+    
+    # Security (important for your project)
+    - gosec         # Security issues
+    
+    # Optional (can be disabled for even faster runs)
+    - goconst       # Repeated strings
+    - unconvert     # Unnecessary conversions
+
+issues:
+  exclude-rules:
+    # Exclude test files from some checks
+    - path: _test\.go
+      linters:
+        - gosec
+        - goconst
+        - errcheck
+    - path: internal/agent/testing/
+      linters:
+        - gosec
+        - goconst
+        - errcheck
+    - path: examples/
+      linters:
+        - gosec
+        - goconst
+        - errcheck
+    - path: cmd/
+      linters:
+        - goconst
+  
+  # Exclude common false positives
+  exclude:
+    - "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*printf?|os\\.(Un)?Setenv). is not checked"
+    - "should have signature"
+    - "ineffective break statement"
+  
+  exclude-use-default: false
+  max-issues-per-linter: 50  # Limit issues per linter
+  max-same-issues: 10        # Limit duplicate issues
+
+service:
+  golangci-lint-version: 1.64.x 

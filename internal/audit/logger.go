@@ -68,7 +68,7 @@ func NewAuditLogger(workspaceRoot string, sessionID string) (*AuditLogger, error
 	}
 
 	logDir := filepath.Join(workspaceRoot, ".cge", "audit")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create audit log directory: %w", err)
 	}
 
@@ -76,7 +76,7 @@ func NewAuditLogger(workspaceRoot string, sessionID string) (*AuditLogger, error
 		time.Now().Format("2006-01-02"), sessionID[:8])
 	logFilePath := filepath.Join(logDir, logFileName)
 
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit log file: %w", err)
 	}

@@ -237,7 +237,7 @@ func processTask(ctx context.Context, task PlanTask, plan *Plan, llmClient llm.C
 	if err := json.Unmarshal([]byte(llmResponse), &response); err != nil {
 		// Save raw response for debugging
 		rawPath := fmt.Sprintf("failed_generate_task_%s_raw.txt", task.ID)
-		_ = os.WriteFile(rawPath, []byte(llmResponse), 0644)
+		_ = os.WriteFile(rawPath, []byte(llmResponse), 0600)
 		return fmt.Errorf("failed to parse LLM JSON response: %w. Raw response saved to %s", err, rawPath)
 	}
 
@@ -306,14 +306,14 @@ func applyChangesToFiles(changes []struct {
 		switch change.Action {
 		case "create", "modify":
 			// Ensure directory exists
-			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0750); err != nil {
 				// Rollback on error
 				rollbackChanges(backups, appliedChanges, workspaceRoot)
 				return fmt.Errorf("failed to create directory for %s: %w", change.FilePath, err)
 			}
 
 			// Write the file content
-			if err := os.WriteFile(fullPath, []byte(change.Content), 0644); err != nil {
+			if err := os.WriteFile(fullPath, []byte(change.Content), 0600); err != nil {
 				// Rollback on error
 				rollbackChanges(backups, appliedChanges, workspaceRoot)
 				return fmt.Errorf("failed to write file %s: %w", change.FilePath, err)
@@ -350,7 +350,7 @@ func rollbackChanges(backups map[string][]byte, appliedChanges []string, workspa
 
 		if backup, exists := backups[filePath]; exists {
 			// Restore from backup
-			if err := os.WriteFile(fullPath, backup, 0644); err != nil {
+			if err := os.WriteFile(fullPath, backup, 0600); err != nil {
 				fmt.Printf("❌ Failed to restore %s: %v\n", filePath, err)
 			} else {
 				fmt.Printf("🔄 Restored %s\n", filePath)
@@ -375,7 +375,7 @@ func saveChangesToOutputDir(changes []struct {
 	Reason   string `json:"reason"`
 }, outputDir, taskID string) error {
 	// Create output directory if it doesn't exist
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -386,7 +386,7 @@ func saveChangesToOutputDir(changes []struct {
 	}
 
 	changesFile := filepath.Join(outputDir, fmt.Sprintf("task_%s_changes.json", taskID))
-	if err := os.WriteFile(changesFile, changesJSON, 0644); err != nil {
+	if err := os.WriteFile(changesFile, changesJSON, 0600); err != nil {
 		return fmt.Errorf("failed to write changes file: %w", err)
 	}
 
@@ -397,7 +397,7 @@ func saveChangesToOutputDir(changes []struct {
 			safeFileName := strings.ReplaceAll(change.FilePath, "/", "_")
 			outputFile := filepath.Join(outputDir, fmt.Sprintf("task_%s_%s_%s", taskID, change.Action, safeFileName))
 
-			if err := os.WriteFile(outputFile, []byte(change.Content), 0644); err != nil {
+			if err := os.WriteFile(outputFile, []byte(change.Content), 0600); err != nil {
 				return fmt.Errorf("failed to write output file %s: %w", outputFile, err)
 			}
 		}

@@ -41,10 +41,10 @@ func Helper() string {
 	for path, content := range files {
 		fullPath := filepath.Join(tmpDir, path)
 		dir := filepath.Dir(fullPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			t.Fatalf("Failed to create directory %s: %v", dir, err)
 		}
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(fullPath, []byte(content), 0600); err != nil {
 			t.Fatalf("Failed to write file %s: %v", fullPath, err)
 		}
 	}
@@ -154,7 +154,7 @@ func TestFileReadTool(t *testing.T) {
 		// Create a binary file
 		binaryPath := filepath.Join(workspace, "binary.bin")
 		binaryData := []byte{0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE}
-		err := os.WriteFile(binaryPath, binaryData, 0644)
+		err := os.WriteFile(binaryPath, binaryData, 0600)
 		if err != nil {
 			t.Fatalf("Failed to create binary file: %v", err)
 		}

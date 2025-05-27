@@ -145,7 +145,7 @@ func (ci *CodebaseInfo) FormatAnalysis() string {
 	b.WriteString("\n")
 
 	// Basic stats
-	b.WriteString(fmt.Sprintf("📊 Codebase Statistics:\n"))
+	b.WriteString("📊 Codebase Statistics:\n")
 	b.WriteString(fmt.Sprintf("- Total source files: %d\n", ci.FileCount))
 	b.WriteString(fmt.Sprintf("- Total lines of code: %d\n", ci.TotalLines))
 	b.WriteString("\n")

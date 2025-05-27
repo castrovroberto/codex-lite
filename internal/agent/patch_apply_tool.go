@@ -125,7 +125,7 @@ func (t *PatchApplyTool) Execute(ctx context.Context, params json.RawMessage) (*
 	var backupPath string
 	if p.BackupOriginal {
 		backupPath = cleanPath + ".bak." + strconv.FormatInt(time.Now().Unix(), 10)
-		if err := os.WriteFile(backupPath, originalContent, 0644); err != nil {
+		if err := os.WriteFile(backupPath, originalContent, 0600); err != nil {
 			return &ToolResult{
 				Success: false,
 				Error:   fmt.Sprintf("failed to create backup: %v", err),
@@ -156,10 +156,10 @@ func (t *PatchApplyTool) Execute(ctx context.Context, params json.RawMessage) (*
 	}
 
 	// Write patched content
-	if err := os.WriteFile(cleanPath, []byte(patchedContent), 0644); err != nil {
+	if err := os.WriteFile(cleanPath, []byte(patchedContent), 0600); err != nil {
 		// Try to restore from backup on write failure
 		if p.BackupOriginal && backupPath != "" {
-			os.WriteFile(cleanPath, originalContent, 0644)
+			os.WriteFile(cleanPath, originalContent, 0600)
 			os.Remove(backupPath)
 		}
 		return &ToolResult{

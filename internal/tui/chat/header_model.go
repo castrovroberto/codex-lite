@@ -78,3 +78,13 @@ func (h *HeaderModel) GetSessionID() string {
 func (h *HeaderModel) GetModelName() string {
 	return h.modelName
 }
+
+// GetProvider returns the provider name
+func (h *HeaderModel) GetProvider() string {
+	return h.provider
+}
+
+// GetStatus returns the status
+func (h *HeaderModel) GetStatus() string {
+	return h.status
+}

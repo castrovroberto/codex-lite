@@ -164,6 +164,11 @@ func (ld *LayoutDimensions) GetMinViewportHeight() int {
 	return ld.theme.MinViewportHeight
 }
 
+// GetViewportFrameHeight returns the height consumed by viewport border frames
+func (ld *LayoutDimensions) GetViewportFrameHeight() int {
+	return 2 // Border frame height (top + bottom)
+}
+
 // CalculateViewportHeight calculates the optimal viewport height given constraints
 func (ld *LayoutDimensions) CalculateViewportHeight(windowHeight, textareaHeight, suggestionAreaHeight, viewportFrameHeight int) int {
 	headerHeight := ld.GetHeaderHeight()

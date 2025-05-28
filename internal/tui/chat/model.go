@@ -145,7 +145,12 @@ type Model struct {
 	cfg       *config.AppConfig
 	parentCtx context.Context
 
-	// Business logic components
+	// Business logic interfaces (injectable for testing)
+	chatService    ChatService
+	delayProvider  DelayProvider
+	historyService HistoryService
+
+	// Business logic components (legacy - can be removed when interfaces are fully adopted)
 	toolRegistry *agent.Registry
 	llmClient    llm.Client
 
@@ -172,6 +177,10 @@ var defaultSlashCommands = []string{
 }
 
 func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) Model {
+	return InitialModelWithDeps(ctx, cfg, modelName, &RealChatService{}, &RealDelayProvider{}, nil)
+}
+
+func InitialModelWithDeps(ctx context.Context, cfg *config.AppConfig, modelName string, chatService ChatService, delayProvider DelayProvider, historyService HistoryService) Model {
 	// Initialize theme and layout
 	theme := NewDefaultTheme()
 	layout := NewLayoutDimensions(theme)
@@ -196,6 +205,9 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		statusBar:         statusBar,
 		cfg:               cfg,
 		parentCtx:         ctx,
+		chatService:       chatService,
+		delayProvider:     delayProvider,
+		historyService:    historyService,
 		loading:           false,
 		chatStartTime:     chatStartTime,
 		availableCommands: defaultSlashCommands,
@@ -220,15 +232,8 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
-func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
-	return func() tea.Msg {
-		// Simulate LLM response for now
-		time.Sleep(1 * time.Second)
-		return ollamaSuccessResponseMsg{
-			response: "This is a simulated response from the LLM.",
-			duration: 1 * time.Second,
-		}
-	}
+func (m Model) sendMessage(prompt string) tea.Cmd {
+	return m.chatService.SendMessage(m.parentCtx, prompt)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -254,16 +259,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle main model logic
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Calculate viewport height using layout dimensions
+		// Calculate viewport height using centralized layout dimensions
 		textareaHeight := m.inputArea.GetHeight()
 		suggestionAreaHeight := m.inputArea.GetSuggestionAreaHeight()
-		viewportFrameHeight := 2 // Border frame
 
 		viewportHeight := m.layout.CalculateViewportHeight(
 			msg.Height,
 			textareaHeight,
 			suggestionAreaHeight,
-			viewportFrameHeight,
+			m.layout.GetViewportFrameHeight(),
 		)
 
 		m.messageList.SetHeight(viewportHeight)
@@ -351,7 +355,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 
 				m.inputArea.Reset()
-				return m, tea.Batch(m.fetchOllamaResponse(userPrompt), m.statusBar.GetSpinnerTickCmd())
+				return m, tea.Batch(m.sendMessage(userPrompt), m.statusBar.GetSpinnerTickCmd())
 			}
 
 		default:
@@ -506,6 +510,7 @@ func (m *Model) LoadHistory(history *ChatHistory) {
 	m.header.SetModelName(history.ModelName)
 	m.messageList.LoadHistory(history.Messages)
 }
+
 
 func formatToolDescriptions(tools []map[string]interface{}) string {
 	var sb strings.Builder

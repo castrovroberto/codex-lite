@@ -51,8 +51,13 @@ Example:
 		var llmClient llm.Client
 		switch cfg.LLM.Provider {
 		case "ollama":
-			llmClient = llm.NewOllamaClient()
-			logger.Info("Using Ollama client", "host", cfg.LLM.OllamaHostURL)
+			ollamaConfig := cfg.GetOllamaConfig()
+			llmClient = llm.NewOllamaClient(ollamaConfig)
+			logger.Info("Using Ollama client", "host", ollamaConfig.HostURL)
+		case "openai":
+			openaiConfig := cfg.GetOpenAIConfig()
+			llmClient = llm.NewOpenAIClient(openaiConfig)
+			logger.Info("Using OpenAI client", "base_url", openaiConfig.BaseURL)
 		default:
 			return fmt.Errorf("unsupported LLM provider: %s", cfg.LLM.Provider)
 		}
@@ -82,7 +87,8 @@ Example:
 		logger.Debug("Successfully gathered initial codebase context")
 
 		// 5. Create command integrator and execute plan
-		integrator := orchestrator.NewCommandIntegrator(llmClient, toolRegistry, workspaceRoot)
+		integratorConfig := cfg.GetIntegratorConfig()
+		integrator := orchestrator.NewCommandIntegrator(llmClient, toolRegistry, integratorConfig)
 
 		planRequest := &orchestrator.PlanRequest{
 			UserGoal:        userGoal,

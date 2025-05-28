@@ -71,6 +71,64 @@ func (ac *AppConfig) GetLoadedChatSystemPrompt() string {
 	return ac.loadedChatSystemPromptContent
 }
 
+// Configuration sub-structs for dependency injection
+
+// OllamaConfig holds configuration specific to Ollama LLM client
+type OllamaConfig struct {
+	HostURL           string        `json:"host_url"`
+	KeepAlive         string        `json:"keep_alive"`
+	RequestTimeout    time.Duration `json:"request_timeout"`
+	MaxTokens         int           `json:"max_tokens"`
+	RequestsPerMinute int           `json:"requests_per_minute"`
+}
+
+// OpenAIConfig holds configuration specific to OpenAI LLM client
+type OpenAIConfig struct {
+	APIKey            string        `json:"api_key"`
+	BaseURL           string        `json:"base_url"`
+	RequestTimeout    time.Duration `json:"request_timeout"`
+	MaxTokens         int           `json:"max_tokens"`
+	RequestsPerMinute int           `json:"requests_per_minute"`
+}
+
+// IntegratorConfig holds configuration for command integrator
+type IntegratorConfig struct {
+	WorkspaceRoot string `json:"workspace_root"`
+	PromptsDir    string `json:"prompts_dir"`
+}
+
+// Convenience methods to extract sub-configs from AppConfig
+
+// GetOllamaConfig extracts Ollama-specific configuration
+func (ac *AppConfig) GetOllamaConfig() OllamaConfig {
+	return OllamaConfig{
+		HostURL:           ac.LLM.OllamaHostURL,
+		KeepAlive:         ac.LLM.OllamaKeepAlive,
+		RequestTimeout:    ac.LLM.RequestTimeoutSeconds,
+		MaxTokens:         ac.LLM.MaxTokensPerRequest,
+		RequestsPerMinute: ac.LLM.RequestsPerMinute,
+	}
+}
+
+// GetOpenAIConfig extracts OpenAI-specific configuration
+func (ac *AppConfig) GetOpenAIConfig() OpenAIConfig {
+	return OpenAIConfig{
+		APIKey:            ac.LLM.OpenAIAPIKey,
+		BaseURL:           "https://api.openai.com/v1", // Default, could be configurable
+		RequestTimeout:    ac.LLM.RequestTimeoutSeconds,
+		MaxTokens:         ac.LLM.MaxTokensPerRequest,
+		RequestsPerMinute: ac.LLM.RequestsPerMinute,
+	}
+}
+
+// GetIntegratorConfig extracts command integrator configuration
+func (ac *AppConfig) GetIntegratorConfig() IntegratorConfig {
+	return IntegratorConfig{
+		WorkspaceRoot: ac.Project.WorkspaceRoot,
+		PromptsDir:    filepath.Join(ac.Project.WorkspaceRoot, "prompts"),
+	}
+}
+
 // Sentinel errors for configuration loading.
 var (
 	ErrConfigFileNotFound   = errors.New("config: specified config file not found")

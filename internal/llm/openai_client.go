@@ -8,22 +8,20 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
+	"github.com/castrovroberto/CGE/internal/config"
 	"github.com/castrovroberto/CGE/internal/contextkeys"
 )
 
 // OpenAIClient implements the Client interface for OpenAI API
 type OpenAIClient struct {
-	apiKey  string
-	baseURL string
+	config config.OpenAIConfig
 }
 
-// NewOpenAIClient creates a new OpenAI client
-func NewOpenAIClient(apiKey string) *OpenAIClient {
+// NewOpenAIClient creates a new OpenAI client with the provided configuration
+func NewOpenAIClient(cfg config.OpenAIConfig) *OpenAIClient {
 	return &OpenAIClient{
-		apiKey:  apiKey,
-		baseURL: "https://api.openai.com/v1",
+		config: cfg,
 	}
 }
 
@@ -227,15 +225,15 @@ func (oc *OpenAIClient) Stream(ctx context.Context, modelName, prompt string, sy
 
 // ListAvailableModels retrieves a list of available models from OpenAI
 func (oc *OpenAIClient) ListAvailableModels(ctx context.Context) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", oc.baseURL+"/models", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", oc.config.BaseURL+"/models", nil)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+oc.apiKey)
+	req.Header.Set("Authorization", "Bearer "+oc.config.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: oc.config.RequestTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai: request failed: %w", err)
@@ -284,15 +282,15 @@ func (oc *OpenAIClient) Embed(ctx context.Context, text string) ([]float32, erro
 		return nil, fmt.Errorf("openai embed: failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", oc.baseURL+"/embeddings", bytes.NewReader(requestBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", oc.config.BaseURL+"/embeddings", bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("openai embed: failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+oc.apiKey)
+	req.Header.Set("Authorization", "Bearer "+oc.config.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: oc.config.RequestTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai embed: request failed: %w", err)
@@ -350,17 +348,17 @@ func (oc *OpenAIClient) makeRequest(ctx context.Context, request OpenAIRequest) 
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", oc.baseURL+"/chat/completions", bytes.NewReader(requestBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", oc.config.BaseURL+"/chat/completions", bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+oc.apiKey)
+	req.Header.Set("Authorization", "Bearer "+oc.config.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	log.Debug("Sending OpenAI request", "model", request.Model)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: oc.config.RequestTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai: request failed: %w", err)
@@ -398,17 +396,17 @@ func (oc *OpenAIClient) makeStreamRequest(ctx context.Context, request OpenAIReq
 		return fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", oc.baseURL+"/chat/completions", bytes.NewReader(requestBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", oc.config.BaseURL+"/chat/completions", bytes.NewReader(requestBody))
 	if err != nil {
 		return fmt.Errorf("openai: failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+oc.apiKey)
+	req.Header.Set("Authorization", "Bearer "+oc.config.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	log.Debug("Sending OpenAI streaming request", "model", request.Model)
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: oc.config.RequestTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("openai: request failed: %w", err)

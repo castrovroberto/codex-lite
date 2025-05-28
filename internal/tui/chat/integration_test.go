@@ -42,12 +42,18 @@ func TestModelWithMockDependencies(t *testing.T) {
 
 		// Verify message was added to message list
 		messages := model.messageList.GetMessages()
-		assert.Greater(t, len(messages), 1, "Should have more than just welcome message")
+		assert.Greater(t, len(messages), 2, "Should have welcome message, user message, and placeholder")
 
-		// Find the user message (skip welcome message)
-		userMessage := messages[len(messages)-1]
+		// Find the user message (second-to-last, since placeholder is last)
+		userMessage := messages[len(messages)-2]
 		assert.Equal(t, "test message", userMessage.text, "User message should be added")
 		assert.Equal(t, "You", userMessage.sender, "Sender should be 'You'")
+
+		// Verify placeholder message was added
+		placeholderMessage := messages[len(messages)-1]
+		assert.Equal(t, "Thinking...", placeholderMessage.text, "Placeholder should be added")
+		assert.Equal(t, "Assistant", placeholderMessage.sender, "Placeholder sender should be 'Assistant'")
+		assert.True(t, placeholderMessage.placeholder, "Message should be marked as placeholder")
 
 		// Verify command was produced
 		assert.NotNil(t, cmd, "Enter should produce command")

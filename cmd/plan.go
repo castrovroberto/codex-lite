@@ -74,11 +74,13 @@ Example:
 		var llmClient llm.Client
 		switch cfg.LLM.Provider {
 		case "ollama":
-			llmClient = llm.NewOllamaClient() // Assuming constructor exists
-			logger.Info("Using Ollama client", "host", cfg.LLM.OllamaHostURL)
-		// case "openai":
-		// llmClient = llm.NewOpenAIClient(cfg.LLM.OpenAIAPIKey) // Example
-		// logger.Info("Using OpenAI client")
+			ollamaConfig := cfg.GetOllamaConfig()
+			llmClient = llm.NewOllamaClient(ollamaConfig)
+			logger.Info("Using Ollama client", "host", ollamaConfig.HostURL)
+		case "openai":
+			openaiConfig := cfg.GetOpenAIConfig()
+			llmClient = llm.NewOpenAIClient(openaiConfig)
+			logger.Info("Using OpenAI client", "base_url", openaiConfig.BaseURL)
 		default:
 			return fmt.Errorf("unsupported LLM provider: %s", cfg.LLM.Provider)
 		}
@@ -252,7 +254,9 @@ func generatePlanWithOrchestrator(ctx context.Context, userGoal string, contextI
 	toolRegistry := toolFactory.CreatePlanningRegistry()
 
 	// Create command integrator and execute plan
-	integrator := orchestrator.NewCommandIntegrator(llmClient, toolRegistry, workspaceRoot)
+	appCfg := cfg.(*config.AppConfig) // Type assertion needed
+	integratorConfig := appCfg.GetIntegratorConfig()
+	integrator := orchestrator.NewCommandIntegrator(llmClient, toolRegistry, integratorConfig)
 
 	planRequest := &orchestrator.PlanRequest{
 		UserGoal:        userGoal,

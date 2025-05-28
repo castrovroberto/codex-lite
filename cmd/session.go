@@ -173,7 +173,11 @@ var sessionResumeCmd = &cobra.Command{
 		var llmClient llm.Client
 		switch cfg.LLM.Provider {
 		case "ollama":
-			llmClient = llm.NewOllamaClient()
+			ollamaConfig := cfg.GetOllamaConfig()
+			llmClient = llm.NewOllamaClient(ollamaConfig)
+		case "openai":
+			openaiConfig := cfg.GetOpenAIConfig()
+			llmClient = llm.NewOpenAIClient(openaiConfig)
 		default:
 			return fmt.Errorf("unsupported LLM provider: %s", cfg.LLM.Provider)
 		}

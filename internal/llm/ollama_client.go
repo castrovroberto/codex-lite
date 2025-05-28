@@ -12,22 +12,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/castrovroberto/CGE/internal/config"
 	"github.com/castrovroberto/CGE/internal/contextkeys"
 )
 
 // OllamaClient implements the Client interface for Ollama.
-// It can be configured with a specific host or will use the one from AppConfig.
-// For now, it relies on AppConfig from context for host, keepAlive, and timeout.
 type OllamaClient struct {
-	// Optionally, a specific Ollama host can be configured here.
-	// If empty, the host from AppConfig in context will be used.
-	// HostURL string
+	config config.OllamaConfig
 }
 
-// NewOllamaClient creates a new Ollama client.
-// It's a simple constructor. Further configuration can be added if needed.
-func NewOllamaClient() *OllamaClient {
-	return &OllamaClient{}
+// NewOllamaClient creates a new Ollama client with the provided configuration.
+func NewOllamaClient(cfg config.OllamaConfig) *OllamaClient {
+	return &OllamaClient{
+		config: cfg,
+	}
 }
 
 // OllamaRequest represents the request structure for Ollama's /api/generate and /api/chat endpoints.
@@ -80,9 +78,8 @@ var (
 // Generate performs a non-streaming generation request to Ollama.
 func (oc *OllamaClient) Generate(ctx context.Context, modelName, prompt string, systemPrompt string, tools []map[string]interface{}) (string, error) {
 	log := contextkeys.LoggerFromContext(ctx)
-	appCfg := contextkeys.ConfigPtrFromContext(ctx)
 
-	apiURL := fmt.Sprintf("%s/api/generate", strings.TrimRight(appCfg.LLM.OllamaHostURL, "/"))
+	apiURL := fmt.Sprintf("%s/api/generate", strings.TrimRight(oc.config.HostURL, "/"))
 
 	// Construct the prompt for Ollama. If a system prompt is provided, it's typically prepended.
 	// Tools are not standard in Ollama's /api/generate in a structured way like OpenAI.
@@ -94,7 +91,7 @@ func (oc *OllamaClient) Generate(ctx context.Context, modelName, prompt string, 
 		Prompt:    prompt,
 		System:    systemPrompt, // Ollama's /api/generate supports a 'system' field
 		Stream:    false,
-		KeepAlive: appCfg.LLM.OllamaKeepAlive,
+		KeepAlive: oc.config.KeepAlive,
 		// Tools: tools, // How tools are passed to Ollama's generate endpoint needs clarification. Might be part of prompt.
 	}
 
@@ -123,7 +120,7 @@ func (oc *OllamaClient) Generate(ctx context.Context, modelName, prompt string, 
 		req.Header.Set("Content-Type", "application/json")
 
 		log.Debug("Sending Ollama query", "url", apiURL, "model", modelName, "attempt", i+1)
-		httpClient := &http.Client{Timeout: appCfg.LLM.RequestTimeoutSeconds}
+		httpClient := &http.Client{Timeout: oc.config.RequestTimeout}
 		resp, httpErr := httpClient.Do(req)
 		lastErr = httpErr
 
@@ -199,16 +196,15 @@ func (oc *OllamaClient) Generate(ctx context.Context, modelName, prompt string, 
 func (oc *OllamaClient) Stream(ctx context.Context, modelName, prompt string, systemPrompt string, tools []map[string]interface{}, out chan<- string) error {
 	defer close(out) // Ensure channel is closed when function exits
 	log := contextkeys.LoggerFromContext(ctx)
-	appCfg := contextkeys.ConfigPtrFromContext(ctx)
 
-	apiURL := fmt.Sprintf("%s/api/generate", strings.TrimRight(appCfg.LLM.OllamaHostURL, "/"))
+	apiURL := fmt.Sprintf("%s/api/generate", strings.TrimRight(oc.config.HostURL, "/"))
 
 	requestPayload := OllamaRequest{
 		Model:     modelName,
 		Prompt:    prompt,
 		System:    systemPrompt,
 		Stream:    true,
-		KeepAlive: appCfg.LLM.OllamaKeepAlive,
+		KeepAlive: oc.config.KeepAlive,
 		// Tools: tools, // As with Generate, tool handling needs review for Ollama stream
 	}
 
@@ -225,7 +221,7 @@ func (oc *OllamaClient) Stream(ctx context.Context, modelName, prompt string, sy
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	httpClient := &http.Client{Timeout: appCfg.LLM.RequestTimeoutSeconds} // Timeout for the entire stream might need adjustment
+	httpClient := &http.Client{Timeout: oc.config.RequestTimeout} // Timeout for the entire stream might need adjustment
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Error("Ollama streaming request failed", "error", err)
@@ -293,9 +289,8 @@ type OllamaTagsResponse struct {
 // ListAvailableModels retrieves a list of available models from Ollama.
 func (oc *OllamaClient) ListAvailableModels(ctx context.Context) ([]string, error) {
 	log := contextkeys.LoggerFromContext(ctx)
-	appCfg := contextkeys.ConfigPtrFromContext(ctx)
 
-	apiURL := fmt.Sprintf("%s/api/tags", strings.TrimRight(appCfg.LLM.OllamaHostURL, "/"))
+	apiURL := fmt.Sprintf("%s/api/tags", strings.TrimRight(oc.config.HostURL, "/"))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
@@ -303,7 +298,7 @@ func (oc *OllamaClient) ListAvailableModels(ctx context.Context) ([]string, erro
 		return nil, fmt.Errorf("ollama listmodels: failed to create request: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: appCfg.LLM.RequestTimeoutSeconds} // Use a reasonable timeout
+	httpClient := &http.Client{Timeout: oc.config.RequestTimeout} // Use a reasonable timeout
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Error("Ollama /api/tags request failed", "error", err)
@@ -373,10 +368,9 @@ func (oc *OllamaClient) SupportsNativeFunctionCalling() bool {
 // Embed generates embeddings for the given text using Ollama's embedding models
 func (oc *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error) {
 	log := contextkeys.LoggerFromContext(ctx)
-	appCfg := contextkeys.ConfigPtrFromContext(ctx)
 
 	// Use Ollama's /api/embeddings endpoint
-	apiURL := fmt.Sprintf("%s/api/embeddings", strings.TrimRight(appCfg.LLM.OllamaHostURL, "/"))
+	apiURL := fmt.Sprintf("%s/api/embeddings", strings.TrimRight(oc.config.HostURL, "/"))
 
 	// Default embedding model - could be made configurable
 	embeddingModel := "nomic-embed-text"
@@ -399,7 +393,7 @@ func (oc *OllamaClient) Embed(ctx context.Context, text string) ([]float32, erro
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	httpClient := &http.Client{Timeout: appCfg.LLM.RequestTimeoutSeconds}
+	httpClient := &http.Client{Timeout: oc.config.RequestTimeout}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Error("Ollama embedding request failed", "error", err)

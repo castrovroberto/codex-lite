@@ -11,9 +11,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/castrovroberto/CGE/internal/agent"
 	"github.com/castrovroberto/CGE/internal/config" // Ensure this path and package are correct
-	"github.com/castrovroberto/CGE/internal/llm"    // Import the new llm package
+	// Import the new llm package
+	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/llm"
 	"github.com/castrovroberto/CGE/internal/logger" // Import logger to get the global logger
 )
 
@@ -150,10 +151,6 @@ type Model struct {
 	delayProvider  DelayProvider
 	historyService HistoryService
 
-	// Business logic components (legacy - can be removed when interfaces are fully adopted)
-	toolRegistry *agent.Registry
-	llmClient    llm.Client
-
 	// State management
 	loading           bool
 	thinkingStartTime time.Time
@@ -177,7 +174,34 @@ var defaultSlashCommands = []string{
 }
 
 func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) Model {
-	return InitialModelWithDeps(ctx, cfg, modelName, &RealChatService{}, &RealDelayProvider{}, nil)
+	// Create LLM client based on configuration
+	var llmClient llm.Client
+	switch cfg.LLM.Provider {
+	case "ollama":
+		ollamaConfig := cfg.GetOllamaConfig()
+		llmClient = llm.NewOllamaClient(ollamaConfig)
+	case "openai":
+		openaiConfig := cfg.GetOpenAIConfig()
+		llmClient = llm.NewOpenAIClient(openaiConfig)
+	default:
+		// Fallback to ollama if provider is unknown
+		ollamaConfig := cfg.GetOllamaConfig()
+		llmClient = llm.NewOllamaClient(ollamaConfig)
+	}
+
+	// Create tool registry with chat tools (use generation registry which includes most tools)
+	workspaceRoot := cfg.Project.WorkspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = "." // Fallback to current directory
+	}
+	toolFactory := agent.NewToolFactory(workspaceRoot)
+	toolRegistry := toolFactory.CreateGenerationRegistry()
+
+	// Create chat service with proper dependencies
+	systemPrompt := cfg.GetLoadedChatSystemPrompt()
+	chatService := NewRealChatService(llmClient, toolRegistry, modelName, systemPrompt)
+
+	return InitialModelWithDeps(ctx, cfg, modelName, chatService, &RealDelayProvider{}, nil)
 }
 
 func InitialModelWithDeps(ctx context.Context, cfg *config.AppConfig, modelName string, chatService ChatService, delayProvider DelayProvider, historyService HistoryService) Model {
@@ -343,15 +367,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if m.inputArea.GetValue() != "" && !m.loading {
-				m.thinkingStartTime = time.Now()
-				m.loading = true
-				m.statusBar.SetLoading(true)
+				// Start loading state with proper coordination
+				m.setLoading(true)
 
 				userPrompt := m.inputArea.GetValue()
 				m.messageList.AddMessage(chatMessage{
 					text:      userPrompt,
 					sender:    "You",
 					timestamp: time.Now(),
+				})
+
+				// Add a placeholder for the assistant response
+				m.messageList.AddMessage(chatMessage{
+					text:        "Thinking...",
+					sender:      "Assistant",
+					timestamp:   time.Now(),
+					placeholder: true,
 				})
 
 				m.inputArea.Reset()
@@ -367,23 +398,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case ollamaSuccessResponseMsg:
-		m.loading = false
-		m.statusBar.SetLoading(false)
+		// End loading state with proper coordination and cleanup
+		m.setLoading(false)
 		m.statusBar.ClearError()
+
+		// Calculate thinking time from the start time
+		var thinkingTime time.Duration
+		if !m.thinkingStartTime.IsZero() {
+			thinkingTime = msg.duration
+		}
 
 		responseMsg := chatMessage{
 			text:         msg.response,
 			sender:       "Assistant",
 			timestamp:    time.Now(),
 			isMarkdown:   true,
-			ThinkingTime: msg.duration,
+			ThinkingTime: thinkingTime,
 		}
 		m.messageList.ReplacePlaceholder(responseMsg)
 
+		// Reset thinking start time
+		m.thinkingStartTime = time.Time{}
+
 	case ollamaErrorMsg:
-		m.loading = false
-		m.statusBar.SetLoading(false)
-		m.statusBar.SetError(msg)
+		// End loading state and handle error
+		m.setError(msg)
 
 		errorMsg := chatMessage{
 			text:      fmt.Sprintf("Error: %v", msg),
@@ -392,8 +431,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messageList.ReplacePlaceholder(errorMsg)
 
+		// Reset thinking start time
+		m.thinkingStartTime = time.Time{}
+
 	case errMsg:
-		m.statusBar.SetError(msg)
+		m.setError(msg)
 
 	// Tool call message handlers
 	case toolStartMsg:
@@ -422,9 +464,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messageList.AddMessage(toolCallMsg)
 
-		// Update components with active tool calls
-		m.messageList.SetActiveToolCalls(m.activeToolCalls)
-		m.statusBar.SetActiveToolCalls(len(m.activeToolCalls))
+		// Update components with active tool calls using centralized method
+		m.updateToolCallState()
 
 	case toolProgressMsg:
 		logger.Get().Debug("Tool call progress update", "toolCallID", msg.toolCallID, "progress", msg.progress, "status", msg.status)
@@ -436,8 +477,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			state.step = msg.step
 			state.totalSteps = msg.totalSteps
 
-			// Update components with latest progress
-			m.messageList.SetActiveToolCalls(m.activeToolCalls)
+			// Update components with latest progress using centralized method
+			m.updateToolCallState()
 		} else {
 			logger.Get().Warn("Received progress for unknown tool call", "toolCallID", msg.toolCallID)
 		}
@@ -468,9 +509,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messageList.AddMessage(toolResultMsg)
 
-		// Update components with updated active tool calls
-		m.messageList.SetActiveToolCalls(m.activeToolCalls)
-		m.statusBar.SetActiveToolCalls(len(m.activeToolCalls))
+		// Update components with updated active tool calls using centralized method
+		m.updateToolCallState()
 
 	default:
 		// Update input area for other messages
@@ -511,7 +551,6 @@ func (m *Model) LoadHistory(history *ChatHistory) {
 	m.messageList.LoadHistory(history.Messages)
 }
 
-
 func formatToolDescriptions(tools []map[string]interface{}) string {
 	var sb strings.Builder
 	for _, tool := range tools {
@@ -519,4 +558,39 @@ func formatToolDescriptions(tools []map[string]interface{}) string {
 			tool["name"], tool["description"], tool["parameters"])
 	}
 	return sb.String()
+}
+
+// State management helper methods
+
+// setLoading sets the loading state consistently across components
+func (m *Model) setLoading(loading bool) {
+	m.loading = loading
+	if loading {
+		m.thinkingStartTime = time.Now()
+	}
+	m.statusBar.SetLoading(loading)
+}
+
+// setError sets error state and clears loading
+func (m *Model) setError(err error) {
+	m.loading = false
+	m.statusBar.SetLoading(false)
+	m.statusBar.SetError(err)
+}
+
+// updateToolCallState updates tool call state consistently across components
+func (m *Model) updateToolCallState() {
+	m.statusBar.SetActiveToolCalls(len(m.activeToolCalls))
+	m.messageList.SetActiveToolCalls(m.activeToolCalls)
+}
+
+// validateState performs state consistency checks (for debugging)
+func (m *Model) validateState() bool {
+	// Check tool call state consistency
+	if len(m.activeToolCalls) < 0 {
+		logger.Get().Warn("Negative active tool call count")
+		return false
+	}
+
+	return true
 }

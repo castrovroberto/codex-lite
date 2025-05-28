@@ -119,6 +119,19 @@ func (ml *MessageListModel) AddMessage(msg chatMessage) {
 		msg.text = ml.processCodeBlocks(msg.text)
 	}
 
+	// Validate placeholder state before adding
+	if msg.placeholder {
+		if ml.placeholderIndex >= 0 && ml.placeholderIndex < len(ml.messages) {
+			logger.Get().Warn("Adding placeholder when one already exists",
+				"existingIndex", ml.placeholderIndex,
+				"messageCount", len(ml.messages))
+			// Replace existing placeholder instead of adding new one
+			ml.messages[ml.placeholderIndex] = msg
+			ml.rebuildViewport()
+			return
+		}
+	}
+
 	ml.messages = append(ml.messages, msg)
 
 	// Update placeholder index if this is a placeholder
@@ -132,12 +145,32 @@ func (ml *MessageListModel) AddMessage(msg chatMessage) {
 
 // ReplacePlaceholder replaces the current placeholder message with real content
 func (ml *MessageListModel) ReplacePlaceholder(msg chatMessage) {
+	// Validate placeholder index bounds
 	if ml.placeholderIndex >= 0 && ml.placeholderIndex < len(ml.messages) {
+		// Verify the message at placeholder index is actually a placeholder
+		if !ml.messages[ml.placeholderIndex].placeholder {
+			logger.Get().Warn("Placeholder index points to non-placeholder message",
+				"index", ml.placeholderIndex,
+				"messageType", "non-placeholder")
+		}
+
 		logger.Get().Debug("Replacing placeholder", "index", ml.placeholderIndex, "sender", msg.sender)
 		ml.messages[ml.placeholderIndex] = msg
-		ml.placeholderIndex = -1
+		ml.placeholderIndex = -1 // Reset placeholder index
 	} else {
-		logger.Get().Debug("No valid placeholder to replace, appending message", "placeholderIndex", ml.placeholderIndex, "messagesLength", len(ml.messages))
+		// No valid placeholder to replace
+		if ml.placeholderIndex >= 0 {
+			logger.Get().Warn("Invalid placeholder index, appending message instead",
+				"placeholderIndex", ml.placeholderIndex,
+				"messagesLength", len(ml.messages))
+		} else {
+			logger.Get().Debug("No placeholder to replace, appending message",
+				"placeholderIndex", ml.placeholderIndex,
+				"messagesLength", len(ml.messages))
+		}
+
+		// Reset invalid placeholder index and append message
+		ml.placeholderIndex = -1
 		ml.messages = append(ml.messages, msg)
 	}
 	ml.rebuildViewport()
@@ -153,9 +186,12 @@ func (ml *MessageListModel) rebuildViewport() {
 		}
 	}()
 
+	// Validate and reset invalid placeholder state before rendering
+	ml.resetInvalidPlaceholder()
+
 	var b strings.Builder
 	for i, cm := range ml.messages {
-		// Add index validation
+		// Add index validation (defensive programming)
 		if i < 0 || i >= len(ml.messages) {
 			logger.Get().Warn("Invalid message index in rebuildViewport", "index", i, "length", len(ml.messages))
 			continue
@@ -382,5 +418,34 @@ func (ml *MessageListModel) GetMessages() []chatMessage {
 // SetActiveToolCalls sets the active tool calls for progress tracking
 func (ml *MessageListModel) SetActiveToolCalls(activeToolCalls map[string]*toolProgressState) {
 	ml.activeToolCalls = activeToolCalls
-	ml.rebuildViewport() // Rebuild to show progress
+	ml.rebuildViewport() // Rebuild to show updated progress
+}
+
+// validatePlaceholderIndex checks if the placeholder index is valid
+func (ml *MessageListModel) validatePlaceholderIndex() bool {
+	if ml.placeholderIndex < 0 {
+		return true // -1 is valid (no placeholder)
+	}
+
+	if ml.placeholderIndex >= len(ml.messages) {
+		return false // Index out of bounds
+	}
+
+	// Check if the message at placeholder index is actually a placeholder
+	return ml.messages[ml.placeholderIndex].placeholder
+}
+
+// resetInvalidPlaceholder resets placeholder index if it's invalid
+func (ml *MessageListModel) resetInvalidPlaceholder() {
+	if !ml.validatePlaceholderIndex() {
+		logger.Get().Warn("Resetting invalid placeholder index",
+			"oldIndex", ml.placeholderIndex,
+			"messageCount", len(ml.messages))
+		ml.placeholderIndex = -1
+	}
+}
+
+// getPlaceholderIndex returns the current placeholder index (for testing/debugging)
+func (ml *MessageListModel) getPlaceholderIndex() int {
+	return ml.placeholderIndex
 }

@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 
 	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/config"
 	"github.com/castrovroberto/CGE/internal/contextkeys"
 	"github.com/castrovroberto/CGE/internal/llm"
 	"github.com/castrovroberto/CGE/internal/templates"
@@ -16,19 +16,18 @@ import (
 type CommandIntegrator struct {
 	llmClient      llm.Client
 	toolRegistry   *agent.Registry
-	workspaceRoot  string
+	config         config.IntegratorConfig
 	templateEngine *templates.Engine
 }
 
 // NewCommandIntegrator creates a new command integrator
-func NewCommandIntegrator(llmClient llm.Client, toolRegistry *agent.Registry, workspaceRoot string) *CommandIntegrator {
-	promptsDir := filepath.Join(workspaceRoot, "prompts")
-	templateEngine := templates.NewEngine(promptsDir)
+func NewCommandIntegrator(llmClient llm.Client, toolRegistry *agent.Registry, cfg config.IntegratorConfig) *CommandIntegrator {
+	templateEngine := templates.NewEngine(cfg.PromptsDir)
 
 	return &CommandIntegrator{
 		llmClient:      llmClient,
 		toolRegistry:   toolRegistry,
-		workspaceRoot:  workspaceRoot,
+		config:         cfg,
 		templateEngine: templateEngine,
 	}
 }

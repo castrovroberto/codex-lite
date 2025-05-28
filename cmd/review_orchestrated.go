@@ -78,8 +78,13 @@ Example:
 		var llmClient llm.Client
 		switch cfg.LLM.Provider {
 		case "ollama":
-			llmClient = llm.NewOllamaClient()
-			logger.Info("Using Ollama client for orchestrated review", "host", cfg.LLM.OllamaHostURL)
+			ollamaConfig := cfg.GetOllamaConfig()
+			llmClient = llm.NewOllamaClient(ollamaConfig)
+			logger.Info("Using Ollama client for orchestrated review", "host", ollamaConfig.HostURL)
+		case "openai":
+			openaiConfig := cfg.GetOpenAIConfig()
+			llmClient = llm.NewOpenAIClient(openaiConfig)
+			logger.Info("Using OpenAI client for orchestrated review", "base_url", openaiConfig.BaseURL)
 		default:
 			return fmt.Errorf("unsupported LLM provider: %s", cfg.LLM.Provider)
 		}
@@ -98,7 +103,8 @@ Example:
 		toolRegistry := toolFactory.CreateReviewRegistry()
 
 		// Create command integrator and execute review
-		integrator := orchestrator.NewCommandIntegrator(llmClient, toolRegistry, workspaceRoot)
+		integratorConfig := cfg.GetIntegratorConfig()
+		integrator := orchestrator.NewCommandIntegrator(llmClient, toolRegistry, integratorConfig)
 
 		// Run initial tests and linting to get baseline
 		logger.Info("Running initial tests and linting...")

@@ -93,8 +93,13 @@ Example:
 		if autoFix {
 			switch cfg.LLM.Provider {
 			case "ollama":
-				llmClient = llm.NewOllamaClient()
-				logger.Info("Using Ollama client for auto-fix", "host", cfg.LLM.OllamaHostURL)
+				ollamaConfig := cfg.GetOllamaConfig()
+				llmClient = llm.NewOllamaClient(ollamaConfig)
+				logger.Info("Using Ollama client for auto-fix", "host", ollamaConfig.HostURL)
+			case "openai":
+				openaiConfig := cfg.GetOpenAIConfig()
+				llmClient = llm.NewOpenAIClient(openaiConfig)
+				logger.Info("Using OpenAI client for auto-fix", "base_url", openaiConfig.BaseURL)
 			default:
 				return fmt.Errorf("unsupported LLM provider: %s", cfg.LLM.Provider)
 			}

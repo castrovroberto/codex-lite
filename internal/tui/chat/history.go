@@ -47,9 +47,9 @@ type ToolCallResult struct {
 func (m *Model) SaveHistory() error {
 	now := time.Now() // Get current time once
 	history := ChatHistory{
-		SessionID: m.sessionID,
-		ModelName: m.modelName,
-		Messages:  m.messages,
+		SessionID: m.header.GetSessionID(),
+		ModelName: m.header.GetModelName(),
+		Messages:  m.messageList.GetMessages(),
 		ToolCalls: []ToolCallRecord{}, // Initialize empty, will be populated if available
 		StartTime: m.chatStartTime,    // Use the actual chat start time from the model
 		EndTime:   &now,               // Set the end time to when history is saved
@@ -64,7 +64,7 @@ func (m *Model) SaveHistory() error {
 	}
 
 	// Create history file with timestamp
-	filename := fmt.Sprintf("chat_%s.json", m.sessionID)
+	filename := fmt.Sprintf("chat_%s.json", m.header.GetSessionID())
 	filepath := filepath.Join(historyDir, filename)
 
 	// Marshal history to JSON

@@ -66,10 +66,24 @@ func (t *CodeSearchTool) Execute(ctx context.Context, params json.RawMessage) (*
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
+	// Check if the required query parameter is present in the original JSON
+	var rawParams map[string]interface{}
+	if err := json.Unmarshal(params, &rawParams); err != nil {
+		return nil, fmt.Errorf("invalid parameters: %w", err)
+	}
+
+	// If query field is not present at all, return an error
+	if _, exists := rawParams["query"]; !exists {
+		return nil, fmt.Errorf("query parameter is required")
+	}
+
+	// Empty query is allowed - return success with no matches
 	if p.Query == "" {
 		return &ToolResult{
-			Success: false,
-			Error:   "query parameter is required",
+			Success: true,
+			Data: map[string]interface{}{
+				"matches": []map[string]interface{}{},
+			},
 		}, nil
 	}
 

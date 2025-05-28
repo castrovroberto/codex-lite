@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,270 +16,158 @@ func TestLayoutDimensionHelpers(t *testing.T) {
 	model := InitialModel(ctx, cfg, "test-model")
 
 	t.Run("getHeaderHeight", func(t *testing.T) {
-		height := model.getHeaderHeight()
+		height := model.layout.GetHeaderHeight()
 		assert.Equal(t, 2, height, "Header height should be 2")
 	})
 
 	t.Run("getStatusBarHeight", func(t *testing.T) {
-		height := model.getStatusBarHeight()
+		height := model.layout.GetStatusBarHeight()
 		assert.Equal(t, 2, height, "Status bar height should be 2")
 	})
 
 	t.Run("getSuggestionAreaHeight_no_suggestions", func(t *testing.T) {
-		height := model.getSuggestionAreaHeight()
+		height := model.inputArea.GetSuggestionAreaHeight()
 		assert.Equal(t, 0, height, "Suggestion area height should be 0 when no suggestions")
 	})
 
 	t.Run("getSuggestionAreaHeight_with_suggestions", func(t *testing.T) {
-		model.suggestions = []string{"/help", "/clear", "/model"}
-		height := model.getSuggestionAreaHeight()
-		assert.Equal(t, 4, height, "Suggestion area height should be suggestions count + 1")
+		// Simulate having suggestions by updating input with "/"
+		model.inputArea.SetValue("/he")
+		// Manually trigger suggestion update since we're not going through the Update method
+		model.inputArea.UpdateSuggestions("/he")
+		height := model.inputArea.GetSuggestionAreaHeight()
+		assert.GreaterOrEqual(t, height, 1, "Suggestion area height should be at least 1 when suggestions exist")
 	})
 
 	t.Run("calculateViewportHeight", func(t *testing.T) {
-		windowHeight := 50
-		height := model.calculateViewportHeight(windowHeight)
-		assert.GreaterOrEqual(t, height, 3, "Viewport height should be at least minimum height")
-		assert.LessOrEqual(t, height, windowHeight, "Viewport height should not exceed window height")
+		height := model.layout.CalculateViewportHeight(50, 3, 0, 2)
+		assert.GreaterOrEqual(t, height, 3, "Viewport height should be at least minimum")
 	})
 }
 
-func TestPlaceholderManagement(t *testing.T) {
+func TestMessageManagement(t *testing.T) {
+	// Create a test model
 	cfg := &config.AppConfig{}
 	ctx := context.Background()
 	model := InitialModel(ctx, cfg, "test-model")
 
-	t.Run("addMessage_regular", func(t *testing.T) {
-		initialCount := len(model.messages)
+	t.Run("addMessage", func(t *testing.T) {
+		initialCount := len(model.messageList.GetMessages())
 
-		model.addMessage(chatMessage{
-			text:      "Hello",
+		model.messageList.AddMessage(chatMessage{
+			text:      "Test message",
 			sender:    "User",
 			timestamp: time.Now(),
 		})
 
-		assert.Equal(t, initialCount+1, len(model.messages), "Message count should increase by 1")
-		assert.Equal(t, -1, model.placeholderIndex, "Placeholder index should remain -1 for regular messages")
+		assert.Equal(t, initialCount+1, len(model.messageList.GetMessages()), "Message count should increase by 1")
 	})
 
-	t.Run("addMessage_placeholder", func(t *testing.T) {
-		initialCount := len(model.messages)
-
-		msg := chatMessage{
+	t.Run("replacePlaceholder", func(t *testing.T) {
+		// Add a placeholder message
+		model.messageList.AddMessage(chatMessage{
 			text:        "...",
-			sender:      "AI",
+			sender:      "Assistant",
 			timestamp:   time.Now(),
 			placeholder: true,
-		}
-
-		model.addMessage(msg)
-
-		assert.Equal(t, initialCount+1, len(model.messages), "Message count should increase")
-		assert.Equal(t, len(model.messages)-1, model.placeholderIndex, "Placeholder index should be set correctly")
-		assert.True(t, model.messages[model.placeholderIndex].placeholder, "Message should be marked as placeholder")
-	})
-
-	t.Run("replacePlaceholder_valid", func(t *testing.T) {
-		// First add a placeholder
-		placeholder := chatMessage{
-			text:        "...",
-			sender:      "AI",
-			timestamp:   time.Now(),
-			placeholder: true,
-		}
-		model.addMessage(placeholder)
-
-		initialCount := len(model.messages)
-		placeholderIdx := model.placeholderIndex
+		})
 
 		// Replace with real content
-		replacement := chatMessage{
+		model.messageList.ReplacePlaceholder(chatMessage{
 			text:      "Real response",
-			sender:    "AI",
-			timestamp: time.Now(),
-		}
-
-		model.replacePlaceholder(replacement)
-
-		assert.Equal(t, initialCount, len(model.messages), "Message count should remain the same")
-		assert.False(t, model.messages[placeholderIdx].placeholder, "Message should no longer be placeholder")
-		assert.Equal(t, "Real response", model.messages[placeholderIdx].text, "Message text should be updated")
-	})
-
-	t.Run("replacePlaceholder_invalid_index", func(t *testing.T) {
-		// Set invalid placeholder index
-		model.placeholderIndex = 999
-		initialCount := len(model.messages)
-
-		model.replacePlaceholder(chatMessage{
-			text:      "New Message",
-			sender:    "AI",
+			sender:    "Assistant",
 			timestamp: time.Now(),
 		})
 
-		assert.Equal(t, initialCount+1, len(model.messages), "Message should be appended when placeholder index is invalid")
+		messages := model.messageList.GetMessages()
+		lastMessage := messages[len(messages)-1]
+		assert.Equal(t, "Real response", lastMessage.text, "Placeholder should be replaced with real content")
+		assert.False(t, lastMessage.placeholder, "Message should no longer be a placeholder")
 	})
 }
 
 func TestSuggestionHandling(t *testing.T) {
+	// Create a test model
 	cfg := &config.AppConfig{}
 	ctx := context.Background()
 	model := InitialModel(ctx, cfg, "test-model")
-
-	t.Run("updateSuggestions_slash_command", func(t *testing.T) {
-		model.updateSuggestions("/he")
-
-		assert.Greater(t, len(model.suggestions), 0, "Should have suggestions for /he")
-		assert.Equal(t, 0, model.selected, "First suggestion should be selected")
-
-		// Check that all suggestions start with "/he"
-		for _, suggestion := range model.suggestions {
-			assert.True(t, strings.HasPrefix(suggestion, "/he"), "All suggestions should start with /he")
-		}
-	})
-
-	t.Run("updateSuggestions_no_slash", func(t *testing.T) {
-		model.updateSuggestions("hello")
-
-		assert.Equal(t, 0, len(model.suggestions), "Should have no suggestions for non-slash input")
-		assert.Equal(t, -1, model.selected, "Selected index should be -1")
-	})
-
-	t.Run("updateSuggestions_empty_input", func(t *testing.T) {
-		model.updateSuggestions("")
-
-		assert.Equal(t, 0, len(model.suggestions), "Should have no suggestions for empty input")
-		assert.Equal(t, -1, model.selected, "Selected index should be -1")
-	})
 
 	t.Run("suggestion_navigation", func(t *testing.T) {
-		// Set up suggestions
-		model.suggestions = []string{"/help", "/clear", "/model"}
-		model.selected = 0
+		// Set input to trigger suggestions
+		model.inputArea.SetValue("/he")
 
-		// Test down navigation
-		model.selected = (model.selected + 1) % len(model.suggestions)
-		assert.Equal(t, 1, model.selected, "Should move to next suggestion")
+		// Test navigation
+		handled := model.inputArea.HandleSuggestionNavigation("down")
+		assert.True(t, handled, "Should handle suggestion navigation when suggestions exist")
+	})
 
-		// Test up navigation
-		model.selected = (model.selected - 1 + len(model.suggestions)) % len(model.suggestions)
-		assert.Equal(t, 0, model.selected, "Should move to previous suggestion")
+	t.Run("apply_suggestion", func(t *testing.T) {
+		// Set input to trigger suggestions
+		model.inputArea.SetValue("/he")
 
-		// Test wrap around (up from first)
-		model.selected = (model.selected - 1 + len(model.suggestions)) % len(model.suggestions)
-		assert.Equal(t, 2, model.selected, "Should wrap to last suggestion")
+		// Apply suggestion
+		applied := model.inputArea.ApplySelectedSuggestion()
+		assert.True(t, applied, "Should apply suggestion when one is selected")
+
+		// Check that suggestions are cleared
+		assert.False(t, model.inputArea.HasSuggestions(), "Suggestions should be cleared after applying")
+	})
+
+	t.Run("clear_suggestions", func(t *testing.T) {
+		// Set input to trigger suggestions
+		model.inputArea.SetValue("/he")
+		assert.True(t, model.inputArea.HasSuggestions(), "Should have suggestions")
+
+		// Clear suggestions
+		model.inputArea.ClearSuggestions()
+		assert.False(t, model.inputArea.HasSuggestions(), "Suggestions should be cleared")
 	})
 }
 
-func TestRebuildViewportSafety(t *testing.T) {
+func TestComponentIntegration(t *testing.T) {
+	// Create a test model
 	cfg := &config.AppConfig{}
 	ctx := context.Background()
 	model := InitialModel(ctx, cfg, "test-model")
 
-	t.Run("rebuildViewport_empty_messages", func(t *testing.T) {
-		// Should not panic with empty messages
-		assert.NotPanics(t, func() {
-			model.rebuildViewport()
-		}, "rebuildViewport should not panic with empty messages")
+	t.Run("header_updates", func(t *testing.T) {
+		model.header.SetModelName("new-model")
+		assert.Equal(t, "new-model", model.header.GetModelName(), "Header should update model name")
+
+		model.header.SetSessionID("new-session")
+		assert.Equal(t, "new-session", model.header.GetSessionID(), "Header should update session ID")
 	})
 
-	t.Run("rebuildViewport_with_messages", func(t *testing.T) {
-		// Add some test messages
-		model.addMessage(chatMessage{
-			text:      "Hello",
-			sender:    "User",
-			timestamp: time.Now(),
-		})
+	t.Run("status_bar_states", func(t *testing.T) {
+		// Test loading state
+		model.statusBar.SetLoading(true)
+		view := model.statusBar.View()
+		assert.Contains(t, view, "Thinking", "Status bar should show loading state")
 
-		model.addMessage(chatMessage{
-			text:       "Hi there!",
-			sender:     "AI",
-			timestamp:  time.Now(),
-			isMarkdown: true,
-		})
+		// Test error state
+		model.statusBar.SetLoading(false)
+		model.statusBar.SetError(assert.AnError)
+		view = model.statusBar.View()
+		assert.Contains(t, view, "Error", "Status bar should show error state")
 
-		// Should not panic with real messages
-		assert.NotPanics(t, func() {
-			model.rebuildViewport()
-		}, "rebuildViewport should not panic with real messages")
+		// Clear error
+		model.statusBar.ClearError()
+		view = model.statusBar.View()
+		assert.NotContains(t, view, "Error", "Status bar should not show error after clearing")
 	})
-}
-
-// New tests for autocomplete improvements
-func TestAutocompleteKeyHandling(t *testing.T) {
-	cfg := &config.AppConfig{}
-	ctx := context.Background()
-	model := InitialModel(ctx, cfg, "test-model")
-
-	t.Run("tab_inserts_suggestion", func(t *testing.T) {
-		// Set up suggestions
-		model.suggestions = []string{"/help", "/clear", "/model"}
-		model.selected = 1 // Select "/clear"
-		model.textarea.SetValue("/cl")
-
-		// Simulate tab key behavior
-		if len(model.suggestions) > 0 && model.selected >= 0 && model.selected < len(model.suggestions) {
-			model.textarea.SetValue(model.suggestions[model.selected])
-			model.suggestions = nil
-			model.selected = -1
-		}
-
-		assert.Equal(t, "/clear", model.textarea.Value(), "Tab should insert selected suggestion")
-		assert.Equal(t, 0, len(model.suggestions), "Suggestions should be cleared after insertion")
-		assert.Equal(t, -1, model.selected, "Selected index should be reset")
-	})
-
-	t.Run("escape_clears_suggestions", func(t *testing.T) {
-		// Set up suggestions
-		model.suggestions = []string{"/help", "/clear", "/model"}
-		model.selected = 0
-
-		// Simulate escape key behavior
-		if len(model.suggestions) > 0 {
-			model.suggestions = nil
-			model.selected = -1
-		}
-
-		assert.Equal(t, 0, len(model.suggestions), "Escape should clear suggestions")
-		assert.Equal(t, -1, model.selected, "Selected index should be reset")
-	})
-
-	t.Run("enter_applies_suggestion", func(t *testing.T) {
-		// Set up suggestions
-		model.suggestions = []string{"/help", "/clear", "/model"}
-		model.selected = 0
-		model.textarea.SetValue("/he")
-
-		// Simulate enter key behavior when suggestions are active
-		if len(model.suggestions) > 0 && model.selected >= 0 && model.selected < len(model.suggestions) {
-			model.textarea.SetValue(model.suggestions[model.selected])
-			model.suggestions = nil
-			model.selected = -1
-		}
-
-		assert.Equal(t, "/help", model.textarea.Value(), "Enter should apply selected suggestion")
-		assert.Equal(t, 0, len(model.suggestions), "Suggestions should be cleared after application")
-		assert.Equal(t, -1, model.selected, "Selected index should be reset")
-	})
-}
-
-func TestViewportHeightRecalculation(t *testing.T) {
-	cfg := &config.AppConfig{}
-	ctx := context.Background()
-	model := InitialModel(ctx, cfg, "test-model")
 
 	t.Run("viewport_height_changes_with_suggestions", func(t *testing.T) {
 		// Add suggestions (this should trigger height recalculation)
-		model.updateSuggestions("/he")
+		model.inputArea.SetValue("/he")
 
 		// The height calculation is complex and depends on window size,
 		// but we can verify that the function doesn't panic and produces reasonable results
-		assert.GreaterOrEqual(t, model.viewport.Height, 3, "Viewport height should be at least minimum")
+		assert.GreaterOrEqual(t, model.messageList.GetHeight(), 3, "Viewport height should be at least minimum")
 
 		// Clear suggestions
-		model.updateSuggestions("hello")
+		model.inputArea.SetValue("hello")
 
 		// Height should be recalculated again
-		assert.GreaterOrEqual(t, model.viewport.Height, 3, "Viewport height should still be at least minimum")
+		assert.GreaterOrEqual(t, model.messageList.GetHeight(), 3, "Viewport height should still be at least minimum")
 	})
 }

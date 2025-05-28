@@ -391,6 +391,83 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.statusBar.SetError(msg)
 
+	// Tool call message handlers
+	case toolStartMsg:
+		logger.Get().Info("Tool call started", "toolCallID", msg.toolCallID, "toolName", msg.toolName)
+
+		// Create new tool progress state
+		m.activeToolCalls[msg.toolCallID] = &toolProgressState{
+			toolName:     msg.toolName,
+			startTime:    time.Now(),
+			progress:     0.0,
+			status:       "Starting...",
+			step:         1,
+			totalSteps:   1,
+			messageIndex: -1, // Will be set when message is added
+		}
+
+		// Add tool call message to chat
+		toolCallMsg := chatMessage{
+			text:       fmt.Sprintf("Executing %s...", msg.toolName),
+			sender:     "System",
+			timestamp:  time.Now(),
+			isToolCall: true,
+			toolName:   msg.toolName,
+			toolCallID: msg.toolCallID,
+			toolParams: msg.params,
+		}
+		m.messageList.AddMessage(toolCallMsg)
+
+		// Update components with active tool calls
+		m.messageList.SetActiveToolCalls(m.activeToolCalls)
+		m.statusBar.SetActiveToolCalls(len(m.activeToolCalls))
+
+	case toolProgressMsg:
+		logger.Get().Debug("Tool call progress update", "toolCallID", msg.toolCallID, "progress", msg.progress, "status", msg.status)
+
+		// Update existing tool progress state
+		if state, exists := m.activeToolCalls[msg.toolCallID]; exists {
+			state.progress = msg.progress
+			state.status = msg.status
+			state.step = msg.step
+			state.totalSteps = msg.totalSteps
+
+			// Update components with latest progress
+			m.messageList.SetActiveToolCalls(m.activeToolCalls)
+		} else {
+			logger.Get().Warn("Received progress for unknown tool call", "toolCallID", msg.toolCallID)
+		}
+
+	case toolCompleteMsg:
+		logger.Get().Info("Tool call completed", "toolCallID", msg.toolCallID, "success", msg.success, "duration", msg.duration)
+
+		// Remove from active tool calls
+		delete(m.activeToolCalls, msg.toolCallID)
+
+		// Add tool result message to chat
+		var resultText string
+		if msg.success {
+			resultText = msg.result
+		} else {
+			resultText = fmt.Sprintf("Tool execution failed: %s", msg.error)
+		}
+
+		toolResultMsg := chatMessage{
+			text:         resultText,
+			sender:       "System",
+			timestamp:    time.Now(),
+			isToolResult: true,
+			toolName:     msg.toolName,
+			toolCallID:   msg.toolCallID,
+			toolSuccess:  msg.success,
+			toolDuration: msg.duration,
+		}
+		m.messageList.AddMessage(toolResultMsg)
+
+		// Update components with updated active tool calls
+		m.messageList.SetActiveToolCalls(m.activeToolCalls)
+		m.statusBar.SetActiveToolCalls(len(m.activeToolCalls))
+
 	default:
 		// Update input area for other messages
 		m.inputArea, cmd = m.inputArea.Update(msg)

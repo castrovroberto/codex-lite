@@ -19,6 +19,7 @@ type InputAreaModel struct {
 	isEditing         bool
 	editingIndex      int
 	width             int
+	lastInputValue    string // Track last input value to detect changes
 }
 
 // NewInputAreaModel creates a new input area model
@@ -43,6 +44,7 @@ func NewInputAreaModel(theme *Theme, availableCommands []string) *InputAreaModel
 		isEditing:         false,
 		editingIndex:      -1,
 		width:             50,
+		lastInputValue:    "",
 	}
 }
 
@@ -59,8 +61,12 @@ func (i *InputAreaModel) Update(msg tea.Msg) (*InputAreaModel, tea.Cmd) {
 	// Update textarea
 	i.textarea, cmd = i.textarea.Update(msg)
 
-	// Update suggestions based on current input
-	i.updateSuggestions(i.textarea.Value())
+	// Only update suggestions if the input value actually changed
+	currentValue := i.textarea.Value()
+	if currentValue != i.lastInputValue {
+		i.lastInputValue = currentValue
+		i.updateSuggestions(currentValue)
+	}
 
 	return i, cmd
 }
@@ -144,8 +150,10 @@ func (i *InputAreaModel) HandleSuggestionNavigation(direction string) bool {
 // ApplySelectedSuggestion applies the currently selected suggestion
 func (i *InputAreaModel) ApplySelectedSuggestion() bool {
 	if len(i.suggestions) > 0 && i.selected >= 0 && i.selected < len(i.suggestions) {
-		i.textarea.SetValue(i.suggestions[i.selected])
+		selectedSuggestion := i.suggestions[i.selected]
+		i.textarea.SetValue(selectedSuggestion)
 		i.textarea.CursorEnd()
+		i.lastInputValue = selectedSuggestion // Update tracked value
 		i.suggestions = nil
 		i.selected = -1
 		return true
@@ -167,11 +175,13 @@ func (i *InputAreaModel) GetValue() string {
 // SetValue sets the textarea value
 func (i *InputAreaModel) SetValue(value string) {
 	i.textarea.SetValue(value)
+	i.lastInputValue = value // Update tracked value
 }
 
 // Reset resets the textarea
 func (i *InputAreaModel) Reset() {
 	i.textarea.Reset()
+	i.lastInputValue = "" // Reset tracked value
 }
 
 // CursorEnd moves cursor to end
@@ -216,6 +226,7 @@ func (i *InputAreaModel) StartEditing(text string, index int) {
 	i.isEditing = true
 	i.editingIndex = index
 	i.textarea.SetValue(text)
+	i.lastInputValue = text // Update tracked value
 }
 
 // StopEditing stops editing mode
@@ -224,6 +235,7 @@ func (i *InputAreaModel) StopEditing() {
 	i.editingIndex = -1
 	i.textarea.Blur()
 	i.textarea.Reset()
+	i.lastInputValue = "" // Reset tracked value
 	i.textarea.Placeholder = "Type your message... (Ctrl+E to edit last, Tab for completion)"
 }
 

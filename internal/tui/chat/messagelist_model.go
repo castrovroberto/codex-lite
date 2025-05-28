@@ -230,7 +230,12 @@ func (ml *MessageListModel) formatToolCall(msg chatMessage) string {
 	// Tool call header with icon
 	header := fmt.Sprintf("🔧 Tool Call: %s", msg.toolName)
 	if msg.toolCallID != "" {
-		header += fmt.Sprintf(" (ID: %s)", msg.toolCallID[:8]) // Show first 8 chars of ID
+		// Safely truncate ID to first 8 chars (or full ID if shorter)
+		idDisplay := msg.toolCallID
+		if len(msg.toolCallID) > 8 {
+			idDisplay = msg.toolCallID[:8]
+		}
+		header += fmt.Sprintf(" (ID: %s)", idDisplay)
 	}
 	parts = append(parts, ml.theme.ToolCall.Render(header))
 

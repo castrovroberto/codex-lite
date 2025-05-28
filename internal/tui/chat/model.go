@@ -483,31 +483,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Adjust for viewport border/frame
+		// Update component widths
 		wFrame := m.viewport.Style.GetHorizontalFrameSize()
-		hFrame := m.viewport.Style.GetVerticalFrameSize()
 		m.viewport.Width = msg.Width - wFrame
-		m.viewport.Height = msg.Height - m.textarea.Height() - 1 - hFrame // -1 for the status bar line
 		m.textarea.SetWidth(msg.Width)
+
+		// Calculate proper viewport height using our new helper method
+		m.viewport.Height = m.calculateViewportHeight(msg.Height)
 
 		// Update progress renderer width
 		if m.progressRenderer != nil {
 			m.progressRenderer.width = msg.Width
 		}
 
+		// Update glamour renderer for new width
 		if m.renderer != nil {
 			newRenderer, err := glamour.NewTermRenderer(
 				glamour.WithAutoStyle(),
 				glamour.WithWordWrap(m.viewport.Width),
 			)
 			if err != nil {
-				logger.Get().Error("Failed to re-initialize glamour markdown renderer on resize", "error", err)
+				logger.Get().Error("Failed to re-initialize glamour renderer on resize", "error", err)
 			} else {
 				m.renderer = newRenderer
+				m.rebuildViewport() // Rebuild with new width
 			}
-			m.rebuildViewport() // Important to apply new width
 		}
-		// Bubbles also need to be updated with WindowSizeMsg
+
+		// Update child components
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -580,29 +583,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				logger.Get().Info("Chat history saved successfully on Ctrl+C.", "sessionID", m.sessionID)
 			}
 			return m, tea.Quit
-		case tea.KeyEsc:
-			if !m.isEditing { // If not editing, Esc quits and saves
-				logger.Get().Info("Escape pressed (not editing), attempting to save chat history and quit TUI.")
-				if err := m.SaveHistory(); err != nil {
-					m.err = fmt.Errorf("error saving history on Escape: %w", err)
-					logger.Get().Error("Failed to save chat history on Escape", "error", err, "sessionID", m.sessionID)
-				} else {
-					logger.Get().Info("Chat history saved successfully on Escape.", "sessionID", m.sessionID)
-				}
-				return m, tea.Quit
-			} else { // If editing, Esc cancels editing mode
-				m.isEditing = false
-				m.editingIndex = -1
-				m.textarea.Blur()
-				m.textarea.Reset()
-				m.textarea.Placeholder = "Type your message... (Ctrl+E to edit last, Tab for completion)"
-				// Let the textarea also process the Esc key (e.g., to clear its internal state if any)
-				m.textarea, cmd = m.textarea.Update(msg)
-				cmds = append(cmds, cmd)
-				// No return here, allow other processing or batching of cmds
-			}
 		default:
-			// For keys not handled by the switch above (Ctrl+C, Esc),
+			// For keys not handled by the switch above (Ctrl+C),
 			// use the string representation for other specific keys or pass to textarea.
 			switch keyStr := msg.String(); keyStr {
 			case "enter":
@@ -612,7 +594,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.textarea.CursorEnd() // Move cursor to end after setting value
 					m.suggestions = nil    // Clear suggestions
 					m.selected = -1        // Reset selection
-					// The message will be sent with the applied suggestion in the next part of this case
+					// Don't send the message yet, just apply the suggestion
+					return m, nil
 				}
 
 				if m.textarea.Value() != "" && !m.loading {
@@ -635,15 +618,65 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea, cmd = m.textarea.Update(msg) // Pass to textarea for consistency or specific handling
 				cmds = append(cmds, cmd)
 			case "tab":
-				if len(m.suggestions) > 0 {
-					m.selected = (m.selected + 1) % len(m.suggestions)
-					// Tab consumed for suggestion cycling, do not pass to textarea
+				if len(m.suggestions) > 0 && m.selected >= 0 && m.selected < len(m.suggestions) {
+					// Tab inserts the selected suggestion
+					m.textarea.SetValue(m.suggestions[m.selected])
+					m.textarea.CursorEnd() // Move cursor to end after setting value
+					m.suggestions = nil    // Clear suggestions
+					m.selected = -1        // Reset selection
+					// Don't pass to textarea when suggestion is applied
 				} else {
 					m.textarea, cmd = m.textarea.Update(msg) // If no suggestions, let textarea handle Tab
 					cmds = append(cmds, cmd)
 				}
-				// After handling tab, update suggestions in case the input text could trigger new ones (though unlikely for pure tab)
+				// After handling tab, update suggestions in case the input text could trigger new ones
 				m.updateSuggestions(m.textarea.Value())
+			case "escape":
+				if len(m.suggestions) > 0 {
+					// Escape clears suggestions
+					m.suggestions = nil
+					m.selected = -1
+					// Don't pass to textarea when clearing suggestions
+				} else {
+					// If no suggestions, let normal Esc handling take over (quit/cancel editing)
+					if !m.isEditing { // If not editing, Esc quits and saves
+						logger.Get().Info("Escape pressed (not editing), attempting to save chat history and quit TUI.")
+						if err := m.SaveHistory(); err != nil {
+							m.err = fmt.Errorf("error saving history on Escape: %w", err)
+							logger.Get().Error("Failed to save chat history on Escape", "error", err, "sessionID", m.sessionID)
+						} else {
+							logger.Get().Info("Chat history saved successfully on Escape.", "sessionID", m.sessionID)
+						}
+						return m, tea.Quit
+					} else { // If editing, Esc cancels editing mode
+						m.isEditing = false
+						m.editingIndex = -1
+						m.textarea.Blur()
+						m.textarea.Reset()
+						m.textarea.Placeholder = "Type your message... (Ctrl+E to edit last, Tab for completion)"
+						// Let the textarea also process the Esc key (e.g., to clear its internal state if any)
+						m.textarea, cmd = m.textarea.Update(msg)
+						cmds = append(cmds, cmd)
+					}
+				}
+			case "up":
+				if len(m.suggestions) > 0 {
+					// Navigate suggestions with arrow keys
+					m.selected = (m.selected - 1 + len(m.suggestions)) % len(m.suggestions)
+					// Don't pass to textarea when suggestions are active
+				} else {
+					m.textarea, cmd = m.textarea.Update(msg)
+					cmds = append(cmds, cmd)
+				}
+			case "down":
+				if len(m.suggestions) > 0 {
+					// Navigate suggestions with arrow keys
+					m.selected = (m.selected + 1) % len(m.suggestions)
+					// Don't pass to textarea when suggestions are active
+				} else {
+					m.textarea, cmd = m.textarea.Update(msg)
+					cmds = append(cmds, cmd)
+				}
 			default: // Crucial for typing, backspace, arrows within textarea
 				m.textarea, cmd = m.textarea.Update(msg)
 				cmds = append(cmds, cmd)
@@ -771,21 +804,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // rebuildViewport re-renders all stored messages into the viewport, applying markdown and wrapping on resize.
 func (m *Model) rebuildViewport() {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Get().Error("Panic in rebuildViewport", "panic", r)
+			// Set fallback content
+			m.viewport.SetContent("Error rendering messages. Please restart the chat.")
+		}
+	}()
+
 	var b strings.Builder
-	for _, cm := range m.messages {
+	for i, cm := range m.messages {
+		// Add index validation
+		if i < 0 || i >= len(m.messages) {
+			logger.Get().Warn("Invalid message index in rebuildViewport", "index", i, "length", len(m.messages))
+			continue
+		}
+
 		// Handle tool call messages specially
 		if cm.isToolCall {
 			b.WriteString(m.formatToolCall(cm))
 		} else if cm.isToolResult {
 			b.WriteString(m.formatToolResult(cm))
-		} else if cm.isMarkdown && m.renderer != nil && strings.HasPrefix(cm.text, "Bot: ") {
-			raw := strings.TrimPrefix(cm.text, "Bot: ")
-			rendered, err := m.renderer.Render(raw)
+		} else if cm.isMarkdown && m.renderer != nil {
+			// Handle all markdown consistently
+			rendered, err := m.renderer.Render(cm.text)
 			if err != nil {
 				logger.Get().Warn("Markdown rendering failed in rebuildViewport", "error", err)
-				b.WriteString(cm.text)
+				// Fall back to regular message formatting
+				if cm.sender != "" && cm.text != "" {
+					senderPrefix := m.senderStyle.Render(cm.sender + ": ")
+					timestamp := m.timeStyle.Render(cm.timestamp.Format("15:04:05"))
+
+					if cm.ThinkingTime > 0 {
+						thinkingTime := m.thinkingTimeStyle.Render(fmt.Sprintf(" (%.2fs)", cm.ThinkingTime.Seconds()))
+						b.WriteString(fmt.Sprintf("%s %s%s\n%s", senderPrefix, timestamp, thinkingTime, cm.text))
+					} else {
+						b.WriteString(fmt.Sprintf("%s %s\n%s", senderPrefix, timestamp, cm.text))
+					}
+				} else {
+					b.WriteString(cm.text)
+				}
 			} else {
-				b.WriteString("Bot: " + strings.TrimSpace(rendered))
+				// Format with sender and timestamp
+				senderPrefix := m.senderStyle.Render(cm.sender + ": ")
+				timestamp := m.timeStyle.Render(cm.timestamp.Format("15:04:05"))
+
+				if cm.ThinkingTime > 0 {
+					thinkingTime := m.thinkingTimeStyle.Render(fmt.Sprintf(" (%.2fs)", cm.ThinkingTime.Seconds()))
+					b.WriteString(fmt.Sprintf("%s %s%s\n%s", senderPrefix, timestamp, thinkingTime, strings.TrimSpace(rendered)))
+				} else {
+					b.WriteString(fmt.Sprintf("%s %s\n%s", senderPrefix, timestamp, strings.TrimSpace(rendered)))
+				}
 			}
 		} else {
 			// Regular message formatting
@@ -833,15 +902,24 @@ func (m *Model) addMessage(msg chatMessage) {
 	}
 
 	m.messages = append(m.messages, msg)
+
+	// Update placeholder index if this is a placeholder
+	if msg.placeholder {
+		m.placeholderIndex = len(m.messages) - 1
+		logger.Get().Debug("Added placeholder message", "index", m.placeholderIndex)
+	}
+
 	m.rebuildViewport()
 }
 
 // replacePlaceholder replaces the current placeholder message (if any) with real content; otherwise appends.
 func (m *Model) replacePlaceholder(msg chatMessage) {
 	if m.placeholderIndex >= 0 && m.placeholderIndex < len(m.messages) {
+		logger.Get().Debug("Replacing placeholder", "index", m.placeholderIndex, "sender", msg.sender)
 		m.messages[m.placeholderIndex] = msg
 		m.placeholderIndex = -1
 	} else {
+		logger.Get().Debug("No valid placeholder to replace, appending message", "placeholderIndex", m.placeholderIndex, "messagesLength", len(m.messages))
 		m.messages = append(m.messages, msg)
 	}
 	m.rebuildViewport()
@@ -929,20 +1007,46 @@ func (m *Model) startEditing() {
 // updateSuggestions populates the suggestions list based on the input.
 // For now, it suggests slash commands if the input starts with "/".
 func (m *Model) updateSuggestions(input string) {
-	m.suggestions = nil // Clear previous suggestions
-	m.selected = -1     // Reset selection
+	previousSuggestionCount := len(m.suggestions)
 
 	if strings.HasPrefix(input, "/") {
-		var currentSuggestions []string
+		m.suggestions = nil
+		m.selected = 0
 		for _, cmd := range m.availableCommands {
 			if strings.HasPrefix(cmd, input) {
-				currentSuggestions = append(currentSuggestions, cmd)
+				m.suggestions = append(m.suggestions, cmd)
 			}
 		}
-		if len(currentSuggestions) > 0 {
-			m.suggestions = currentSuggestions
-			m.selected = 0 // Default to selecting the first suggestion
+		// Ensure selected index is valid
+		if len(m.suggestions) == 0 {
+			m.selected = -1
+		} else if m.selected >= len(m.suggestions) {
+			m.selected = 0
 		}
+
+		// Log suggestion updates for debugging
+		if len(m.suggestions) > 0 {
+			logger.Get().Debug("Updated suggestions", "input", input, "count", len(m.suggestions), "selected", m.selected)
+		}
+	} else {
+		m.suggestions = nil
+		m.selected = -1
+	}
+
+	// If suggestion count changed, recalculate viewport height
+	if len(m.suggestions) != previousSuggestionCount {
+		// Estimate current window height from current viewport and component heights
+		currentHeight := m.viewport.Height + m.getHeaderHeight() + m.getStatusBarHeight() +
+			m.textarea.Height() + previousSuggestionCount + m.viewport.Style.GetVerticalFrameSize()
+
+		// Recalculate viewport height with new suggestion count
+		newHeight := m.calculateViewportHeight(currentHeight)
+		logger.Get().Debug("Recalculating viewport height due to suggestion change",
+			"previousSuggestions", previousSuggestionCount,
+			"newSuggestions", len(m.suggestions),
+			"oldHeight", m.viewport.Height,
+			"newHeight", newHeight)
+		m.viewport.Height = newHeight
 	}
 }
 
@@ -955,51 +1059,7 @@ func (m Model) View() string {
 	view.WriteString(header)
 	view.WriteString("\n")
 
-	// Messages
-	var renderedMessages []string
-	for _, msg := range m.messages {
-		var sender string
-		var content string
-
-		sender = m.senderStyle.Render(msg.sender + ":")
-		timestamp := m.timeStyle.Render(msg.timestamp.Format("15:04:05"))
-
-		// Add thinking time if available (for AI messages)
-		thinkingTimeStr := ""
-		if msg.sender == "AI" && msg.ThinkingTime > 0 {
-			thinkingTimeStr = m.thinkingTimeStyle.Render(fmt.Sprintf(" (took %.2fs)", msg.ThinkingTime.Seconds()))
-		}
-
-		if msg.placeholder {
-			content = msg.text // Placeholder text, no special rendering
-		} else if msg.isMarkdown {
-			// Process for code blocks first
-			processedText := m.processCodeBlocks(msg.text)
-			renderedMarkdown, err := m.renderer.Render(processedText)
-			if err != nil {
-				content = m.errorStyle.Render("Failed to render markdown: " + err.Error())
-			} else {
-				content = renderedMarkdown
-			}
-		} else if msg.isCode {
-			highlightedCode := m.highlightCode(msg.text, msg.language)
-			content = m.codeStyle.Render(highlightedCode)
-		} else {
-			content = msg.text // Plain text
-		}
-
-		// Assemble the message line
-		// Check if content is multi-line (often true for markdown/code)
-		if strings.Contains(content, "\n") {
-			renderedMessages = append(renderedMessages, fmt.Sprintf("%s %s%s\n%s", sender, timestamp, thinkingTimeStr, content))
-		} else {
-			renderedMessages = append(renderedMessages, fmt.Sprintf("%s %s%s %s", sender, timestamp, thinkingTimeStr, content))
-		}
-	}
-
-	m.viewport.SetContent(strings.Join(renderedMessages, "\n"))
-
-	// Viewport and Textarea
+	// Viewport (content is managed by rebuildViewport())
 	view.WriteString(m.viewport.View())
 	view.WriteString("\n")
 	view.WriteString(m.textarea.View())
@@ -1125,4 +1185,41 @@ func formatToolDescriptions(tools []map[string]interface{}) string {
 			tool["name"], tool["description"], tool["parameters"])
 	}
 	return sb.String()
+}
+
+// Layout dimension helper methods
+func (m *Model) getHeaderHeight() int {
+	return 2 // Header + newline
+}
+
+func (m *Model) getStatusBarHeight() int {
+	return 2 // Status bar + newline
+}
+
+func (m *Model) getSuggestionAreaHeight() int {
+	if len(m.suggestions) > 0 {
+		return len(m.suggestions) + 1 // suggestions + newline
+	}
+	return 0
+}
+
+func (m *Model) calculateViewportHeight(windowHeight int) int {
+	headerHeight := m.getHeaderHeight()
+	statusBarHeight := m.getStatusBarHeight()
+	textareaHeight := m.textarea.Height()
+	suggestionAreaHeight := m.getSuggestionAreaHeight()
+
+	// Account for viewport frame (border)
+	viewportFrameHeight := m.viewport.Style.GetVerticalFrameSize()
+
+	// Calculate available height for viewport content
+	availableHeight := windowHeight - headerHeight - statusBarHeight - textareaHeight - suggestionAreaHeight - viewportFrameHeight
+
+	// Ensure minimum viewport height
+	minHeight := 3
+	if availableHeight < minHeight {
+		return minHeight
+	}
+
+	return availableHeight
 }

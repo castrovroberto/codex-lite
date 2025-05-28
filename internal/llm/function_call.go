@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -37,7 +38,52 @@ type ToolFunctionDefinition struct {
 func ParseFunctionCall(response string) (*FunctionCallResponse, error) {
 	response = strings.TrimSpace(response)
 
-	// Try to parse as JSON function call first
+	// First, try to extract JSON from the response if it's mixed with text
+	jsonPattern := regexp.MustCompile(`\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}`)
+	matches := jsonPattern.FindAllString(response, -1)
+
+	for _, match := range matches {
+		// Try to parse as JSON function call
+		var functionCall FunctionCall
+		if err := json.Unmarshal([]byte(match), &functionCall); err == nil {
+			// Validate that it has required fields for a function call
+			if functionCall.Name != "" {
+				// Validate arguments if present
+				if functionCall.Arguments != nil {
+					var args map[string]interface{}
+					if json.Unmarshal(functionCall.Arguments, &args) != nil {
+						continue // Skip if arguments are malformed
+					}
+				}
+				return &FunctionCallResponse{
+					IsTextResponse: false,
+					FunctionCall:   &functionCall,
+				}, nil
+			}
+		}
+
+		// Try alternative format: {"function_call": {...}}
+		var wrapper struct {
+			FunctionCall *FunctionCall `json:"function_call"`
+			ToolCall     *FunctionCall `json:"tool_call"`
+		}
+		if err := json.Unmarshal([]byte(match), &wrapper); err == nil {
+			if wrapper.FunctionCall != nil && wrapper.FunctionCall.Name != "" {
+				return &FunctionCallResponse{
+					IsTextResponse: false,
+					FunctionCall:   wrapper.FunctionCall,
+				}, nil
+			}
+			if wrapper.ToolCall != nil && wrapper.ToolCall.Name != "" {
+				return &FunctionCallResponse{
+					IsTextResponse: false,
+					FunctionCall:   wrapper.ToolCall,
+				}, nil
+			}
+		}
+	}
+
+	// Try direct parse if response looks like pure JSON
 	if strings.HasPrefix(response, "{") && strings.HasSuffix(response, "}") {
 		var functionCall FunctionCall
 		if err := json.Unmarshal([]byte(response), &functionCall); err == nil {

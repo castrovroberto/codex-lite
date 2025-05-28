@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"fmt"
+
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -50,7 +52,7 @@ func NewDefaultTheme() *Theme {
 	theme := &Theme{
 		// Layout dimensions
 		HeaderHeight:      2,
-		StatusBarHeight:   2,
+		StatusBarHeight:   1,
 		MinViewportHeight: 3,
 	}
 
@@ -183,4 +185,18 @@ func (ld *LayoutDimensions) CalculateViewportHeight(windowHeight, textareaHeight
 	}
 
 	return availableHeight
+}
+
+// ValidateLayout validates that all component heights sum to the window height
+func (ld *LayoutDimensions) ValidateLayout(windowHeight, textareaHeight, suggestionAreaHeight, viewportFrameHeight int) error {
+	totalHeight := ld.GetHeaderHeight() + ld.GetStatusBarHeight() +
+		textareaHeight + suggestionAreaHeight + viewportFrameHeight
+	calculatedViewportHeight := ld.CalculateViewportHeight(windowHeight, textareaHeight, suggestionAreaHeight, viewportFrameHeight)
+
+	actualTotal := totalHeight + calculatedViewportHeight
+	if actualTotal != windowHeight {
+		return fmt.Errorf("layout height mismatch: components sum to %d, but window height is %d (diff: %d)",
+			actualTotal, windowHeight, windowHeight-actualTotal)
+	}
+	return nil
 }

@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
 
 	"github.com/castrovroberto/CGE/internal/contextkeys"
+	"github.com/castrovroberto/CGE/internal/logger"
 	"github.com/castrovroberto/CGE/internal/tui/chat"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,13 +28,16 @@ Examples:
   CGE chat --session <id>     # Continue a previous session
   CGE chat --list-sessions    # List available sessions`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		appCfgValue := contextkeys.ConfigFromContext(cmd.Context())
+		// Get configuration and logger from context
+		ctx := cmd.Context()
+		appCfgValue := contextkeys.ConfigFromContext(ctx)
 		appCfg := &appCfgValue
-		log := contextkeys.LoggerFromContext(cmd.Context())
+		log := contextkeys.LoggerFromContext(ctx)
 
-		if log == nil {
-			fmt.Fprintln(os.Stderr, "Error: Logger not found in context. Using a temporary basic logger.")
-			log = slog.New(slog.NewTextHandler(os.Stderr, nil))
+		// Initialize TUI-safe logger to prevent logs from interfering with display
+		logFile := ".cge/chat.log"
+		if err := logger.InitLoggerForTUI(appCfg.Logging.Level, logFile); err != nil {
+			log.Warn("Failed to initialize TUI logger, logs may interfere with display", "error", err)
 		}
 
 		// Handle --list-sessions flag
@@ -85,7 +87,6 @@ Examples:
 		log.Info("Starting chat session", "model", chatModelName)
 
 		// Create a context containing the global config and logger for downstream components
-		ctx := cmd.Context()
 		ctx = context.WithValue(ctx, contextkeys.ConfigKey, appCfg)
 		ctx = context.WithValue(ctx, contextkeys.LoggerKey, log)
 

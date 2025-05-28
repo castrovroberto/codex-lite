@@ -23,7 +23,7 @@ func TestLayoutDimensionHelpers(t *testing.T) {
 
 	t.Run("getStatusBarHeight", func(t *testing.T) {
 		height := model.layout.GetStatusBarHeight()
-		assert.Equal(t, 2, height, "Status bar height should be 2")
+		assert.Equal(t, 1, height, "Status bar height should be 1")
 	})
 
 	t.Run("getSuggestionAreaHeight_no_suggestions", func(t *testing.T) {

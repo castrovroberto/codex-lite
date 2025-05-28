@@ -287,6 +287,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		textareaHeight := m.inputArea.GetHeight()
 		suggestionAreaHeight := m.inputArea.GetSuggestionAreaHeight()
 
+		// Add layout validation and debug logging
+		err := m.layout.ValidateLayout(
+			msg.Height,
+			textareaHeight,
+			suggestionAreaHeight,
+			m.layout.GetViewportFrameHeight(),
+		)
+		if err != nil {
+			logger.Get().Warn("Layout validation failed", "error", err)
+		}
+
+		// Add debug layout information
+		m.debugLayoutInfo(msg.Width, msg.Height, textareaHeight, suggestionAreaHeight)
+
 		viewportHeight := m.layout.CalculateViewportHeight(
 			msg.Height,
 			textareaHeight,
@@ -582,6 +596,21 @@ func (m *Model) setError(err error) {
 func (m *Model) updateToolCallState() {
 	m.statusBar.SetActiveToolCalls(len(m.activeToolCalls))
 	m.messageList.SetActiveToolCalls(m.activeToolCalls)
+
+	// Use centralized status bar state update
+	m.updateStatusBarState()
+}
+
+// updateStatusBarState performs centralized, atomic status bar state updates
+func (m *Model) updateStatusBarState() {
+	state := StatusBarState{
+		ActiveToolCalls:  len(m.activeToolCalls),
+		SessionStartTime: m.chatStartTime,
+		Loading:          m.loading,
+		Err:              nil, // Errors are set separately via SetError
+		LastUpdateTime:   time.Now(),
+	}
+	m.statusBar.UpdateState(state)
 }
 
 // validateState performs state consistency checks (for debugging)
@@ -593,4 +622,19 @@ func (m *Model) validateState() bool {
 	}
 
 	return true
+}
+
+// debugLayoutInfo logs detailed layout information for troubleshooting
+func (m *Model) debugLayoutInfo(windowWidth, windowHeight, textareaHeight, suggestionAreaHeight int) {
+	logger.Get().Debug("Layout debug info",
+		"windowWidth", windowWidth,
+		"windowHeight", windowHeight,
+		"headerHeight", m.layout.GetHeaderHeight(),
+		"statusBarHeight", m.layout.GetStatusBarHeight(),
+		"inputAreaHeight", textareaHeight,
+		"suggestionAreaHeight", suggestionAreaHeight,
+		"viewportFrameHeight", m.layout.GetViewportFrameHeight(),
+		"calculatedViewportHeight", m.layout.CalculateViewportHeight(windowHeight, textareaHeight, suggestionAreaHeight, m.layout.GetViewportFrameHeight()),
+		"activeToolCalls", len(m.activeToolCalls),
+	)
 }

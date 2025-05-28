@@ -73,3 +73,6 @@ govulncheck.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Chat history
+.cge/

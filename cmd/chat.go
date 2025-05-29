@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/castrovroberto/CGE/internal/contextkeys"
+	"github.com/castrovroberto/CGE/internal/di"
 	"github.com/castrovroberto/CGE/internal/logger"
 	"github.com/castrovroberto/CGE/internal/tui/chat"
 
@@ -91,8 +92,22 @@ Examples:
 		ctx = context.WithValue(ctx, contextkeys.ConfigKey, appCfg)
 		ctx = context.WithValue(ctx, contextkeys.LoggerKey, log)
 
-		// Initialize chat model with history if available
-		chatAppModel := chat.InitialModel(ctx, appCfg, chatModelName)
+		// Create dependency injection container
+		container := di.NewContainer(appCfg)
+
+		// Get system prompt and create chat presenter using DI container
+		systemPrompt := appCfg.GetLoadedChatSystemPrompt()
+		chatPresenter := container.GetChatPresenter(ctx, chatModelName, systemPrompt)
+
+		// Initialize chat model with dependency injection
+		chatAppModel := chat.NewChatModel(
+			chat.WithParentContext(ctx),
+			chat.WithInitialConfig(appCfg),
+			chat.WithMessageProvider(chatPresenter),
+			chat.WithDelayProvider(&chat.RealDelayProvider{}),
+		)
+
+		// Load history if available
 		if history != nil {
 			chatAppModel.LoadHistory(history)
 		}

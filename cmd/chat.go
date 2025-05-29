@@ -97,6 +97,12 @@ Examples:
 			chatAppModel.LoadHistory(history)
 		}
 
+		// Update header with correct provider info
+		if chatAppModel.Header() != nil {
+			chatAppModel.Header().SetProvider(appCfg.LLM.Provider)
+			chatAppModel.Header().SetModelName(chatModelName)
+		}
+
 		// Set more compatible color profile and detect terminal capabilities
 		profile := termenv.ColorProfile()
 		log.Debug("Detected terminal color profile", "profile", profile)

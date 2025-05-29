@@ -12,21 +12,27 @@ import (
 
 func TestModelWithMockDependencies(t *testing.T) {
 	t.Run("successful_message_flow", func(t *testing.T) {
-		// Setup mock chat service with predictable response
-		mockChat := &MockChatService{
-			Responses: []MockResponse{
-				{
-					Response: "Mock response from LLM",
-					Duration: time.Millisecond * 100,
-					Error:    nil,
-				},
-			},
-		}
-
-		// Create model with mock dependencies
+		// Create model with mock dependencies using new constructor
 		cfg := &config.AppConfig{}
 		ctx := context.Background()
-		model := InitialModelWithDeps(ctx, cfg, "test-model", mockChat, &MockDelayProvider{}, nil)
+
+		// Create a mock message provider that mimics the old chat service behavior
+		mockProvider := NewMockMessageProvider().WithAutoResponses([]ChatMessage{
+			{
+				ID:        "mock-1",
+				Type:      AssistantMessage,
+				Sender:    "Assistant",
+				Text:      "Mock response from LLM",
+				Timestamp: time.Now(),
+			},
+		})
+
+		model := NewChatModel(
+			WithParentContext(ctx),
+			WithInitialConfig(cfg),
+			WithMessageProvider(mockProvider),
+			WithDelayProvider(&MockDelayProvider{}),
+		)
 
 		// Simulate user typing and sending a message
 		model.inputArea.SetValue("test message")
@@ -58,12 +64,17 @@ func TestModelWithMockDependencies(t *testing.T) {
 		// Verify command was produced
 		assert.NotNil(t, cmd, "Enter should produce command")
 
-		// Simulate the mock response
-		response := ollamaSuccessResponseMsg{
-			response: "Mock response from LLM",
-			duration: time.Millisecond * 100,
+		// Simulate receiving a message from the provider
+		chatMsg := chatMsgWrapper{
+			ChatMessage: ChatMessage{
+				ID:        "test-1",
+				Type:      AssistantMessage,
+				Sender:    "Assistant",
+				Text:      "Mock response from LLM",
+				Timestamp: time.Now(),
+			},
 		}
-		updatedModel, _ = model.Update(response)
+		updatedModel, _ = model.Update(chatMsg)
 		model = updatedModel.(Model)
 
 		// Verify model state after response
@@ -75,24 +86,23 @@ func TestModelWithMockDependencies(t *testing.T) {
 		assert.Equal(t, "Mock response from LLM", lastMessage.text, "Response message should be added")
 		assert.Equal(t, "Assistant", lastMessage.sender, "Sender should be 'Assistant'")
 		assert.True(t, lastMessage.isMarkdown, "Response should be markdown")
+
+		// Clean up
+		mockProvider.Close()
 	})
 
 	t.Run("error_message_flow", func(t *testing.T) {
-		// Setup mock chat service with error response
-		mockChat := &MockChatService{
-			Responses: []MockResponse{
-				{
-					Response: "",
-					Duration: 0,
-					Error:    assert.AnError,
-				},
-			},
-		}
-
 		// Create model with mock dependencies
 		cfg := &config.AppConfig{}
 		ctx := context.Background()
-		model := InitialModelWithDeps(ctx, cfg, "test-model", mockChat, &MockDelayProvider{}, nil)
+
+		mockProvider := NewMockMessageProvider()
+		model := NewChatModel(
+			WithParentContext(ctx),
+			WithInitialConfig(cfg),
+			WithMessageProvider(mockProvider),
+			WithDelayProvider(&MockDelayProvider{}),
+		)
 
 		// Send a message
 		model.inputArea.SetValue("test message")
@@ -100,9 +110,17 @@ func TestModelWithMockDependencies(t *testing.T) {
 		updatedModel, _ := model.Update(enterMsg)
 		model = updatedModel.(Model)
 
-		// Simulate the error response
-		errorResponse := ollamaErrorMsg(assert.AnError)
-		updatedModel, _ = model.Update(errorResponse)
+		// Simulate an error message from the provider
+		errorMsg := chatMsgWrapper{
+			ChatMessage: ChatMessage{
+				ID:        "error-1",
+				Type:      ErrorMessage,
+				Sender:    "System",
+				Text:      "Test error message",
+				Timestamp: time.Now(),
+			},
+		}
+		updatedModel, _ = model.Update(errorMsg)
 		model = updatedModel.(Model)
 
 		// Verify error handling
@@ -111,16 +129,25 @@ func TestModelWithMockDependencies(t *testing.T) {
 		// Verify error message was added
 		messages := model.messageList.GetMessages()
 		lastMessage := messages[len(messages)-1]
-		assert.Contains(t, lastMessage.text, "Error:", "Error message should be added")
+		assert.Contains(t, lastMessage.text, "Test error message", "Error message should be added")
 		assert.Equal(t, "System", lastMessage.sender, "Error sender should be 'System'")
+
+		// Clean up
+		mockProvider.Close()
 	})
 
 	t.Run("suggestion_workflow", func(t *testing.T) {
 		// Create model with mock dependencies
 		cfg := &config.AppConfig{}
 		ctx := context.Background()
-		mockChat := &MockChatService{}
-		model := InitialModelWithDeps(ctx, cfg, "test-model", mockChat, &MockDelayProvider{}, nil)
+
+		mockProvider := NewMockMessageProvider()
+		model := NewChatModel(
+			WithParentContext(ctx),
+			WithInitialConfig(cfg),
+			WithMessageProvider(mockProvider),
+			WithDelayProvider(&MockDelayProvider{}),
+		)
 
 		// Simulate typing slash command
 		model.inputArea.SetValue("/h")
@@ -146,14 +173,23 @@ func TestModelWithMockDependencies(t *testing.T) {
 		assert.False(t, model.inputArea.HasSuggestions(), "Suggestions should be cleared after applying")
 		suggestedValue := model.inputArea.GetValue()
 		assert.Contains(t, suggestedValue, "/help", "Should contain help command")
+
+		// Clean up
+		mockProvider.Close()
 	})
 
 	t.Run("window_resize_with_suggestions", func(t *testing.T) {
 		// Create model with mock dependencies
 		cfg := &config.AppConfig{}
 		ctx := context.Background()
-		mockChat := &MockChatService{}
-		model := InitialModelWithDeps(ctx, cfg, "test-model", mockChat, &MockDelayProvider{}, nil)
+
+		mockProvider := NewMockMessageProvider()
+		model := NewChatModel(
+			WithParentContext(ctx),
+			WithInitialConfig(cfg),
+			WithMessageProvider(mockProvider),
+			WithDelayProvider(&MockDelayProvider{}),
+		)
 
 		// Setup suggestions
 		model.inputArea.SetValue("/h")
@@ -171,6 +207,9 @@ func TestModelWithMockDependencies(t *testing.T) {
 		// Viewport height should be recalculated
 		assert.GreaterOrEqual(t, model.messageList.GetHeight(), model.layout.GetMinViewportHeight(),
 			"Viewport height should be at least minimum after resize")
+
+		// Clean up
+		mockProvider.Close()
 	})
 }
 
@@ -179,8 +218,14 @@ func TestModelToolCallIntegration(t *testing.T) {
 		// Create model with mock dependencies
 		cfg := &config.AppConfig{}
 		ctx := context.Background()
-		mockChat := &MockChatService{}
-		model := InitialModelWithDeps(ctx, cfg, "test-model", mockChat, &MockDelayProvider{}, nil)
+
+		mockProvider := NewMockMessageProvider()
+		model := NewChatModel(
+			WithParentContext(ctx),
+			WithInitialConfig(cfg),
+			WithMessageProvider(mockProvider),
+			WithDelayProvider(&MockDelayProvider{}),
+		)
 
 		// Start a tool call
 		startMsg := toolStartMsg{
@@ -233,14 +278,23 @@ func TestModelToolCallIntegration(t *testing.T) {
 		assert.True(t, lastMessage.isToolResult, "Last message should be tool result")
 		assert.True(t, lastMessage.toolSuccess, "Tool should be marked successful")
 		assert.Equal(t, "Search completed successfully", lastMessage.text, "Result text should match")
+
+		// Clean up
+		mockProvider.Close()
 	})
 
 	t.Run("concurrent_tool_calls", func(t *testing.T) {
 		// Create model with mock dependencies
 		cfg := &config.AppConfig{}
 		ctx := context.Background()
-		mockChat := &MockChatService{}
-		model := InitialModelWithDeps(ctx, cfg, "test-model", mockChat, &MockDelayProvider{}, nil)
+
+		mockProvider := NewMockMessageProvider()
+		model := NewChatModel(
+			WithParentContext(ctx),
+			WithInitialConfig(cfg),
+			WithMessageProvider(mockProvider),
+			WithDelayProvider(&MockDelayProvider{}),
+		)
 
 		// Start multiple tool calls
 		startMsg1 := toolStartMsg{toolCallID: "tool-1", toolName: "search", params: map[string]interface{}{}}
@@ -269,6 +323,9 @@ func TestModelToolCallIntegration(t *testing.T) {
 		assert.Len(t, model.activeToolCalls, 1, "Should have one active tool call")
 		assert.Contains(t, model.activeToolCalls, "tool-2", "Second tool should still be active")
 		assert.NotContains(t, model.activeToolCalls, "tool-1", "First tool should be completed")
+
+		// Clean up
+		mockProvider.Close()
 	})
 }
 
@@ -277,8 +334,14 @@ func TestModelLayoutCalculations(t *testing.T) {
 		// Create model with mock dependencies
 		cfg := &config.AppConfig{}
 		ctx := context.Background()
-		mockChat := &MockChatService{}
-		model := InitialModelWithDeps(ctx, cfg, "test-model", mockChat, &MockDelayProvider{}, nil)
+
+		mockProvider := NewMockMessageProvider()
+		model := NewChatModel(
+			WithParentContext(ctx),
+			WithInitialConfig(cfg),
+			WithMessageProvider(mockProvider),
+			WithDelayProvider(&MockDelayProvider{}),
+		)
 
 		// Test different window sizes
 		testSizes := []struct {
@@ -304,14 +367,23 @@ func TestModelLayoutCalculations(t *testing.T) {
 					"Viewport should not exceed window height")
 			})
 		}
+
+		// Clean up
+		mockProvider.Close()
 	})
 
 	t.Run("suggestions_affect_viewport_height", func(t *testing.T) {
 		// Create model with mock dependencies
 		cfg := &config.AppConfig{}
 		ctx := context.Background()
-		mockChat := &MockChatService{}
-		model := InitialModelWithDeps(ctx, cfg, "test-model", mockChat, &MockDelayProvider{}, nil)
+
+		mockProvider := NewMockMessageProvider()
+		model := NewChatModel(
+			WithParentContext(ctx),
+			WithInitialConfig(cfg),
+			WithMessageProvider(mockProvider),
+			WithDelayProvider(&MockDelayProvider{}),
+		)
 
 		// Set initial window size
 		resizeMsg := tea.WindowSizeMsg{Width: 100, Height: 50}
@@ -333,5 +405,8 @@ func TestModelLayoutCalculations(t *testing.T) {
 		// Viewport should be smaller when suggestions are present
 		assert.LessOrEqual(t, heightWithSuggestions, heightWithoutSuggestions,
 			"Viewport should be smaller or equal when suggestions are present")
+
+		// Clean up
+		mockProvider.Close()
 	})
 }

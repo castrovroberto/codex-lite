@@ -12,10 +12,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/castrovroberto/CGE/internal/config" // Ensure this path and package are correct
-	// Import the new llm package
 	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/config" // Ensure this path and package are correct
 	"github.com/castrovroberto/CGE/internal/llm"
+
+	// Import the new llm package
+
 	"github.com/castrovroberto/CGE/internal/logger" // Import logger to get the global logger
 )
 
@@ -133,6 +135,11 @@ type chatMessage struct {
 	toolParams   map[string]interface{} // New: tool parameters for display
 }
 
+// Add near the top after other type definitions
+type chatMsgWrapper struct {
+	ChatMessage
+}
+
 // Model defines the state of the chat TUI
 type Model struct {
 	// Component models
@@ -148,9 +155,9 @@ type Model struct {
 	parentCtx context.Context
 
 	// Business logic interfaces (injectable for testing)
-	chatService    ChatService
-	delayProvider  DelayProvider
-	historyService HistoryService
+	messageProvider MessageProvider
+	delayProvider   DelayProvider
+	historyService  HistoryService
 
 	// State management
 	loading           bool
@@ -174,6 +181,64 @@ var defaultSlashCommands = []string{
 	"/quit",
 }
 
+// NewChatModel creates a new ChatModel using functional options
+func NewChatModel(opts ...ChatModelOption) Model {
+	// Initialize with default values
+	m := Model{
+		theme:             NewDefaultTheme(),
+		availableCommands: defaultSlashCommands,
+		activeToolCalls:   make(map[string]*toolProgressState),
+		chatStartTime:     time.Now(),
+	}
+
+	// Apply all provided options
+	for _, opt := range opts {
+		opt(&m)
+	}
+
+	// Ensure essential components are initialized if not provided by options
+	if m.theme == nil {
+		m.theme = NewDefaultTheme()
+	}
+	if m.layout == nil {
+		m.layout = NewLayoutDimensions(m.theme)
+	}
+
+	sessionID := m.chatStartTime.Format("20060102150405")
+	if m.header == nil {
+		m.header = NewHeaderModel(m.theme, "Unknown", "default", sessionID, "Initializing")
+	}
+	if m.statusBar == nil {
+		m.statusBar = NewStatusBarModel(m.theme, m.chatStartTime)
+	}
+	if m.inputArea == nil {
+		m.inputArea = NewInputAreaModel(m.theme, m.availableCommands)
+	}
+	if m.messageList == nil {
+		m.messageList = NewMessageListModel(m.theme, 50, 10)
+	}
+
+	// Ensure essential providers are set
+	if m.messageProvider == nil {
+		panic("MessageProvider is required for ChatModel")
+	}
+	if m.delayProvider == nil {
+		m.delayProvider = &RealDelayProvider{}
+	}
+
+	// Add welcome message
+	welcomeMsg := chatMessage{
+		text:       "Welcome to CGE Chat! Type your message or use '/' for commands.",
+		sender:     "System",
+		timestamp:  time.Now(),
+		isMarkdown: false,
+	}
+	m.messageList.AddMessage(welcomeMsg)
+
+	return m
+}
+
+// Legacy InitialModel function for compatibility - creates ChatPresenter automatically
 func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) Model {
 	// Create LLM client based on configuration
 	var llmClient llm.Client
@@ -190,83 +255,108 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		llmClient = llm.NewOllamaClient(ollamaConfig)
 	}
 
-	// Create tool registry with chat tools (use generation registry which includes most tools)
+	// Create tool registry with chat tools
 	workspaceRoot := cfg.Project.WorkspaceRoot
 	if workspaceRoot == "" {
 		workspaceRoot = "." // Fallback to current directory
 	}
 
-	// Convert workspace root to absolute path to fix list_directory tool access issues
+	// Convert workspace root to absolute path
 	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
 	if err != nil {
-		// If we can't make it absolute, use the original path as fallback
 		absWorkspaceRoot = workspaceRoot
 	}
 
 	toolFactory := agent.NewToolFactory(absWorkspaceRoot)
 	toolRegistry := toolFactory.CreateGenerationRegistry()
 
-	// Create chat service with proper dependencies
+	// Create chat presenter
 	systemPrompt := cfg.GetLoadedChatSystemPrompt()
-	chatService := NewRealChatService(llmClient, toolRegistry, modelName, systemPrompt)
+	presenter := NewChatPresenter(ctx, llmClient, toolRegistry, systemPrompt, modelName)
 
-	return InitialModelWithDeps(ctx, cfg, modelName, chatService, &RealDelayProvider{}, nil)
-}
-
-func InitialModelWithDeps(ctx context.Context, cfg *config.AppConfig, modelName string, chatService ChatService, delayProvider DelayProvider, historyService HistoryService) Model {
-	// Initialize theme and layout
-	theme := NewDefaultTheme()
-	layout := NewLayoutDimensions(theme)
-
-	// Initialize chat start time
-	chatStartTime := time.Now()
-	sessionID := chatStartTime.Format("20060102150405")
-
-	// Initialize component models
-	header := NewHeaderModel(theme, "Ollama", modelName, sessionID, "Connected")
-	statusBar := NewStatusBarModel(theme, chatStartTime)
-	inputArea := NewInputAreaModel(theme, defaultSlashCommands)
-	messageList := NewMessageListModel(theme, 50, 10)
-
-	// Create model
-	m := Model{
-		theme:             theme,
-		layout:            layout,
-		header:            header,
-		messageList:       messageList,
-		inputArea:         inputArea,
-		statusBar:         statusBar,
-		cfg:               cfg,
-		parentCtx:         ctx,
-		chatService:       chatService,
-		delayProvider:     delayProvider,
-		historyService:    historyService,
-		loading:           false,
-		chatStartTime:     chatStartTime,
-		availableCommands: defaultSlashCommands,
-		activeToolCalls:   make(map[string]*toolProgressState),
-	}
-
-	// Add welcome message
-	welcomeMsg := chatMessage{
-		text:       "Welcome to CGE Chat! Type your message below or use '/' for commands.",
-		sender:     "System",
-		timestamp:  time.Now(),
-		isMarkdown: false,
-	}
-	m.messageList.AddMessage(welcomeMsg)
-
-	return m
+	// Create model with options
+	return NewChatModel(
+		WithParentContext(ctx),
+		WithInitialConfig(cfg),
+		WithMessageProvider(presenter),
+		WithDelayProvider(&RealDelayProvider{}),
+	)
 }
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.statusBar.GetSpinnerTickCmd(),
+		m.listenForMessages(), // Start listening for messages from the provider
 	)
 }
 
 func (m Model) sendMessage(prompt string) tea.Cmd {
-	return m.chatService.SendMessage(m.parentCtx, prompt)
+	// Send the message through the message provider
+	if err := m.messageProvider.Send(m.parentCtx, prompt); err != nil {
+		return func() tea.Msg {
+			return errMsg(err)
+		}
+	}
+	return nil
+}
+
+// listenForMessages creates a command that listens to the message provider's channel
+func (m Model) listenForMessages() tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case msg, ok := <-m.messageProvider.Messages():
+			if !ok {
+				return errMsg(fmt.Errorf("message provider channel closed"))
+			}
+			return chatMsgWrapper{ChatMessage: msg}
+		case <-m.parentCtx.Done():
+			return mainContextCancelledMsg{}
+		}
+	}
+}
+
+// convertToTuiMessage converts a ChatMessage to the internal chatMessage format
+func convertToTuiMessage(msg ChatMessage) chatMessage {
+	tuiMsg := chatMessage{
+		text:      msg.Text,
+		sender:    msg.Sender,
+		timestamp: msg.Timestamp,
+	}
+
+	// Map message types to appropriate display properties
+	switch msg.Type {
+	case AssistantMessage:
+		tuiMsg.isMarkdown = true
+	case ToolCallMessage:
+		tuiMsg.isToolCall = true
+		if name, ok := msg.Metadata["tool_name"].(string); ok {
+			tuiMsg.toolName = name
+		}
+		if id, ok := msg.Metadata["tool_call_id"].(string); ok {
+			tuiMsg.toolCallID = id
+		}
+		if params, ok := msg.Metadata["params"].(map[string]interface{}); ok {
+			tuiMsg.toolParams = params
+		}
+	case ToolResultMessage:
+		tuiMsg.isToolResult = true
+		if name, ok := msg.Metadata["tool_name"].(string); ok {
+			tuiMsg.toolName = name
+		}
+		if id, ok := msg.Metadata["tool_call_id"].(string); ok {
+			tuiMsg.toolCallID = id
+		}
+		if success, ok := msg.Metadata["success"].(bool); ok {
+			tuiMsg.toolSuccess = success
+		}
+		if duration, ok := msg.Metadata["duration"].(time.Duration); ok {
+			tuiMsg.toolDuration = duration
+		}
+	case ErrorMessage:
+		// Error messages are displayed as regular text, but could be styled differently
+	}
+
+	return tuiMsg
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -562,6 +652,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update components with updated active tool calls using centralized method
 		m.updateToolCallState()
 
+	case chatMsgWrapper:
+		// Handle new messages from the MessageProvider
+		chatMessage := msg.ChatMessage
+		switch chatMessage.Type {
+		case UserMessage:
+			// User messages are typically added when sending, but could be echoed back
+			m.messageList.AddMessage(convertToTuiMessage(chatMessage))
+		case AssistantMessage:
+			m.setLoading(false) // Stop loading when we receive assistant response
+			m.messageList.ReplacePlaceholder(convertToTuiMessage(chatMessage))
+		case ErrorMessage:
+			m.setError(fmt.Errorf("%s", chatMessage.Text))
+			m.messageList.ReplacePlaceholder(convertToTuiMessage(chatMessage))
+		case ToolCallMessage:
+			// Display tool call attempt
+			m.messageList.AddMessage(convertToTuiMessage(chatMessage))
+			if _, ok := chatMessage.Metadata["tool_call_id"].(string); ok {
+				m.updateToolCallState()
+			}
+		case ToolResultMessage:
+			// Display tool result
+			m.messageList.AddMessage(convertToTuiMessage(chatMessage))
+			m.updateToolCallState()
+		case SystemMessage:
+			// Display system messages
+			m.messageList.AddMessage(convertToTuiMessage(chatMessage))
+		}
+		m.messageList.GotoBottom()
+		// Return a new command to continue listening
+		return m, m.listenForMessages()
+
 	default:
 		// Update input area for other messages
 		m.inputArea, cmd = m.inputArea.Update(msg)
@@ -688,4 +809,31 @@ func (m *Model) debugLayoutInfoWithHeader(windowWidth, windowHeight, textareaHei
 		"calculatedViewportHeight", m.layout.CalculateViewportHeightWithHeader(windowHeight, textareaHeight, suggestionAreaHeight, m.layout.GetViewportFrameHeight(), m.header),
 		"activeToolCalls", len(m.activeToolCalls),
 	)
+}
+
+// Getter methods for accessing model components
+
+// Header returns the header model
+func (m *Model) Header() *HeaderModel {
+	return m.header
+}
+
+// MessageList returns the message list model
+func (m *Model) MessageList() *MessageListModel {
+	return m.messageList
+}
+
+// InputArea returns the input area model
+func (m *Model) InputArea() *InputAreaModel {
+	return m.inputArea
+}
+
+// StatusBar returns the status bar model
+func (m *Model) StatusBar() *StatusBarModel {
+	return m.statusBar
+}
+
+// Theme returns the theme
+func (m *Model) Theme() *Theme {
+	return m.theme
 }

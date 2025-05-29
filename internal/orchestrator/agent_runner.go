@@ -115,7 +115,6 @@ type ToolCallAttempt struct {
 	Timestamp    time.Time `json:"timestamp"`
 }
 
-
 // AgentRunner manages the orchestration between LLM and tools
 type AgentRunner struct {
 	llmClient      llm.Client

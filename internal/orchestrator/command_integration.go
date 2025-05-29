@@ -14,10 +14,11 @@ import (
 
 // CommandIntegrator provides high-level integration between commands and the orchestrator
 type CommandIntegrator struct {
-	llmClient      llm.Client
-	toolRegistry   *agent.Registry
-	config         config.IntegratorConfig
-	templateEngine *templates.Engine
+	llmClient          llm.Client
+	toolRegistry       *agent.Registry
+	config             config.IntegratorConfig
+	templateEngine     *templates.Engine
+	deliberationConfig config.DeliberationConfig
 }
 
 // NewCommandIntegrator creates a new command integrator
@@ -29,8 +30,51 @@ func NewCommandIntegrator(llmClient llm.Client, toolRegistry *agent.Registry, cf
 		toolRegistry:   toolRegistry,
 		config:         cfg,
 		templateEngine: templateEngine,
+		// Default deliberation config - can be overridden with SetDeliberationConfig
+		deliberationConfig: config.DeliberationConfig{
+			Enabled:             false,
+			ConfidenceThreshold: 0.7,
+			MaxThoughtDepth:     3,
+			RequireExplanation:  true,
+			ThoughtTimeout:      30,
+			EnableReflection:    false,
+			VerifyHighRisk:      true,
+			RequireConfirmation: false,
+			HighRiskPatterns:    []string{"delete", "remove", "drop", "truncate"},
+		},
 	}
 }
+
+// SetDeliberationConfig sets the deliberation configuration
+func (ci *CommandIntegrator) SetDeliberationConfig(config config.DeliberationConfig) {
+	ci.deliberationConfig = config
+}
+
+// RunnerInterface defines the interface for both regular and deliberation runners
+type RunnerInterface interface {
+	RunWithCommand(ctx context.Context, initialPrompt string, command string) (RunnerResult, error)
+	SetConfig(config *RunConfig)
+}
+
+// RunnerResult is a common interface for both RunResult and DeliberationResult
+type RunnerResult interface {
+	GetFinalResponse() string
+	GetMessages() []Message
+	GetSuccess() bool
+	GetError() string
+}
+
+// Ensure RunResult implements RunnerResult
+func (r *RunResult) GetFinalResponse() string { return r.FinalResponse }
+func (r *RunResult) GetMessages() []Message   { return r.Messages }
+func (r *RunResult) GetSuccess() bool         { return r.Success }
+func (r *RunResult) GetError() string         { return r.Error }
+
+// Ensure DeliberationResult implements RunnerResult
+func (dr *DeliberationResult) GetFinalResponse() string { return dr.RunResult.FinalResponse }
+func (dr *DeliberationResult) GetMessages() []Message   { return dr.RunResult.Messages }
+func (dr *DeliberationResult) GetSuccess() bool         { return dr.RunResult.Success }
+func (dr *DeliberationResult) GetError() string         { return dr.RunResult.Error }
 
 // PlanRequest represents a planning request
 type PlanRequest struct {
@@ -80,8 +124,11 @@ Your final response must be a valid JSON plan following this structure:
 Use tools to explore the codebase as needed, then provide the final plan in JSON format.`
 
 	// Create agent runner with plan configuration
-	runner := NewAgentRunner(ci.llmClient, ci.toolRegistry, systemPrompt, req.Model)
-	runner.SetConfig(PlanRunConfig())
+	runner, err := ci.createRunner(systemPrompt, req.Model, PlanRunConfig())
+	if err != nil {
+		log.Error("Plan orchestration failed", "error", err)
+		return nil, fmt.Errorf("plan orchestration failed: %w", err)
+	}
 
 	// Prepare initial prompt with context
 	initialPrompt := fmt.Sprintf(`User Goal: %s
@@ -92,7 +139,7 @@ Codebase Context:
 %v`, req.UserGoal, req.CodebaseContext)
 
 	// Run the orchestrator
-	result, err := runner.Run(ctx, initialPrompt)
+	result, err := runner.RunWithCommand(ctx, initialPrompt, "")
 	if err != nil {
 		log.Error("Plan orchestration failed", "error", err)
 		return nil, fmt.Errorf("plan orchestration failed: %w", err)
@@ -100,17 +147,17 @@ Codebase Context:
 
 	// Parse the final response as JSON plan
 	var plan interface{}
-	if result.FinalResponse != "" {
-		if err := json.Unmarshal([]byte(result.FinalResponse), &plan); err != nil {
-			log.Error("Failed to parse plan JSON", "error", err, "response", result.FinalResponse)
+	if result.GetFinalResponse() != "" {
+		if err := json.Unmarshal([]byte(result.GetFinalResponse()), &plan); err != nil {
+			log.Error("Failed to parse plan JSON", "error", err, "response", result.GetFinalResponse())
 			return nil, fmt.Errorf("failed to parse plan JSON: %w", err)
 		}
 	}
 
 	return &PlanResponse{
 		Plan:     plan,
-		Messages: result.Messages,
-		Success:  result.Success,
+		Messages: result.GetMessages(),
+		Success:  result.GetSuccess(),
 	}, nil
 }
 
@@ -152,8 +199,11 @@ For each change you make:
 Work systematically through the task requirements. When you have completed all necessary changes, provide a summary of what was implemented.`
 
 	// Create agent runner with generate configuration
-	runner := NewAgentRunner(ci.llmClient, ci.toolRegistry, systemPrompt, req.Model)
-	runner.SetConfig(GenerateRunConfig())
+	runner, err := ci.createRunner(systemPrompt, req.Model, GenerateRunConfig())
+	if err != nil {
+		log.Error("Generate orchestration failed", "error", err)
+		return nil, fmt.Errorf("generate orchestration failed: %w", err)
+	}
 
 	// Prepare initial prompt with task details
 	taskJSON, _ := json.MarshalIndent(req.Task, "", "  ")
@@ -176,7 +226,7 @@ Please implement this task by making the necessary code changes. Use the availab
 		}())
 
 	// Run the orchestrator
-	result, err := runner.Run(ctx, initialPrompt)
+	result, err := runner.RunWithCommand(ctx, initialPrompt, "")
 	if err != nil {
 		log.Error("Generate orchestration failed", "error", err)
 		return nil, fmt.Errorf("generate orchestration failed: %w", err)
@@ -184,7 +234,7 @@ Please implement this task by making the necessary code changes. Use the availab
 
 	// Extract changes from tool calls
 	var changes []interface{}
-	for _, msg := range result.Messages {
+	for _, msg := range result.GetMessages() {
 		if msg.Role == "tool" && (msg.Name == "write_file" || msg.Name == "apply_patch_to_file") {
 			changes = append(changes, map[string]interface{}{
 				"tool":    msg.Name,
@@ -195,8 +245,8 @@ Please implement this task by making the necessary code changes. Use the availab
 
 	return &GenerateResponse{
 		Changes:  changes,
-		Messages: result.Messages,
-		Success:  result.Success,
+		Messages: result.GetMessages(),
+		Success:  result.GetSuccess(),
 	}, nil
 }
 
@@ -252,10 +302,11 @@ Work systematically through all issues. Focus on making minimal, precise changes
 	}
 
 	// Create agent runner with review configuration
-	runner := NewAgentRunner(ci.llmClient, ci.toolRegistry, systemPrompt, req.Model)
-	reviewConfig := ReviewRunConfig()
-	reviewConfig.MaxIterations = req.MaxCycles
-	runner.SetConfig(reviewConfig)
+	runner, err := ci.createRunner(systemPrompt, req.Model, ReviewRunConfig())
+	if err != nil {
+		log.Error("Review orchestration failed", "error", err)
+		return nil, fmt.Errorf("review orchestration failed: %w", err)
+	}
 
 	// Prepare initial prompt with test/lint results
 	initialPrompt := fmt.Sprintf(`Please analyze and fix the following issues:
@@ -272,7 +323,7 @@ Please use the available tools to read the relevant files, understand the issues
 		req.TestOutput, req.LintOutput, req.TargetDir)
 
 	// Run the orchestrator
-	result, err := runner.Run(ctx, initialPrompt)
+	result, err := runner.RunWithCommand(ctx, initialPrompt, "")
 	if err != nil {
 		log.Error("Review orchestration failed", "error", err)
 		return nil, fmt.Errorf("review orchestration failed: %w", err)
@@ -280,7 +331,7 @@ Please use the available tools to read the relevant files, understand the issues
 
 	// Extract fixes from tool calls
 	var fixes []string
-	for _, msg := range result.Messages {
+	for _, msg := range result.GetMessages() {
 		if msg.Role == "tool" && msg.Name == "apply_patch_to_file" {
 			fixes = append(fixes, fmt.Sprintf("Applied patch via %s", msg.Name))
 		}
@@ -288,7 +339,54 @@ Please use the available tools to read the relevant files, understand the issues
 
 	return &ReviewResponse{
 		FixesApplied: fixes,
-		Messages:     result.Messages,
-		Success:      result.Success,
+		Messages:     result.GetMessages(),
+		Success:      result.GetSuccess(),
 	}, nil
+}
+
+// createRunner creates either a regular or deliberation-enabled runner based on configuration
+func (ci *CommandIntegrator) createRunner(systemPrompt, model string, runConfig *RunConfig) (RunnerInterface, error) {
+	if ci.deliberationConfig.Enabled {
+		// Create deliberation-enabled runner
+		deliberationRunner := NewDeliberationRunner(
+			ci.llmClient,
+			ci.toolRegistry,
+			systemPrompt,
+			model,
+			ci.deliberationConfig,
+		)
+		deliberationRunner.SetConfig(runConfig)
+		return &DeliberationRunnerWrapper{deliberationRunner}, nil
+	} else {
+		// Create regular runner
+		regularRunner := NewAgentRunner(ci.llmClient, ci.toolRegistry, systemPrompt, model)
+		regularRunner.SetConfig(runConfig)
+		return &AgentRunnerWrapper{regularRunner}, nil
+	}
+}
+
+// AgentRunnerWrapper wraps AgentRunner to implement RunnerInterface
+type AgentRunnerWrapper struct {
+	*AgentRunner
+}
+
+func (arw *AgentRunnerWrapper) RunWithCommand(ctx context.Context, initialPrompt string, command string) (RunnerResult, error) {
+	result, err := arw.AgentRunner.RunWithCommand(ctx, initialPrompt, command)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// DeliberationRunnerWrapper wraps DeliberationRunner to implement RunnerInterface
+type DeliberationRunnerWrapper struct {
+	*DeliberationRunner
+}
+
+func (drw *DeliberationRunnerWrapper) RunWithCommand(ctx context.Context, initialPrompt string, command string) (RunnerResult, error) {
+	result, err := drw.DeliberationRunner.RunWithDeliberationAndCommand(ctx, initialPrompt, command)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }

@@ -301,6 +301,10 @@ func (dr *DeliberationRunner) executeActionPhase(ctx context.Context, messages [
 		if err != nil {
 			resultMessage.Content = fmt.Sprintf("Error executing tool: %v", err)
 		} else {
+			// Check if this is a clarification request
+			if dr.isClarificationRequest(toolResult) {
+				return dr.handleClarificationRequest(ctx, callMessage, functionCall, toolResult)
+			}
 			resultMessage.Content = dr.formatToolResult(toolResult)
 		}
 
@@ -424,4 +428,71 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// isClarificationRequest checks if a tool result indicates a clarification request
+func (dr *DeliberationRunner) isClarificationRequest(toolResult *agent.ToolResult) bool {
+	if !toolResult.Success {
+		return false
+	}
+
+	if data, ok := toolResult.Data.(map[string]interface{}); ok {
+		if clarificationNeeded, exists := data["clarification_needed"]; exists {
+			if needed, ok := clarificationNeeded.(bool); ok {
+				return needed
+			}
+		}
+	}
+
+	return false
+}
+
+// handleClarificationRequest handles a clarification request by pausing execution
+func (dr *DeliberationRunner) handleClarificationRequest(ctx context.Context, callMessage Message, functionCall *llm.FunctionCall, toolResult *agent.ToolResult) (*ActionResult, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+
+	data, _ := toolResult.Data.(map[string]interface{})
+	formattedMessage, _ := data["formatted_message"].(string)
+	urgency, _ := data["urgency"].(string)
+	confidence, _ := data["confidence_level"].(float64)
+
+	log.Info("Clarification request detected",
+		"urgency", urgency,
+		"confidence", confidence)
+
+	// Create a special clarification message that the orchestrator can detect
+	clarificationMessage := fmt.Sprintf(`CLARIFICATION_REQUEST: %s
+
+This execution is paused pending user response. The user's input will be added to the conversation to continue.`, formattedMessage)
+
+	resultMessage := Message{
+		Role:       "tool",
+		ToolCallID: functionCall.ID,
+		Name:       functionCall.Name,
+		Content:    clarificationMessage,
+	}
+
+	// Add a deliberation step for the clarification
+	clarificationStep := DeliberationStep{
+		ID:         fmt.Sprintf("clarification_%d", len(dr.thoughtHistory)),
+		Phase:      PhaseThought,
+		Content:    fmt.Sprintf("Clarification requested due to low confidence (%.2f) or ambiguous requirements", confidence),
+		Confidence: confidence,
+		Timestamp:  time.Now(),
+		Internal:   false, // This should be visible in conversation
+		Metadata: map[string]interface{}{
+			"urgency":           urgency,
+			"clarification":     true,
+			"formatted_message": formattedMessage,
+		},
+	}
+	dr.thoughtHistory = append(dr.thoughtHistory, clarificationStep)
+
+	return &ActionResult{
+		Messages:   []Message{callMessage, resultMessage},
+		IsToolCall: true,
+		IsFinal:    true, // Pause execution here
+		ToolName:   functionCall.Name,
+		Content:    clarificationMessage,
+	}, nil
 }

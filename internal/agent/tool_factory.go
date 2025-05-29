@@ -61,6 +61,8 @@ func (tf *ToolFactory) CreatePlanningRegistry() *Registry {
 	registry.Register(NewCodeSearchTool(tf.workspaceRoot))
 	registry.Register(tf.createListDirTool())
 	registry.Register(NewGitTool(tf.workspaceRoot))
+	// Add clarification tool for planning when uncertainty arises
+	registry.Register(NewClarificationTool(tf.workspaceRoot))
 
 	return registry
 }
@@ -76,6 +78,8 @@ func (tf *ToolFactory) CreateGenerationRegistry() *Registry {
 	registry.Register(tf.createListDirTool())
 	registry.Register(NewPatchApplyTool(tf.workspaceRoot))
 	registry.Register(NewGitTool(tf.workspaceRoot))
+	// Add clarification tool for generation when requirements are unclear
+	registry.Register(NewClarificationTool(tf.workspaceRoot))
 
 	return registry
 }
@@ -97,6 +101,8 @@ func (tf *ToolFactory) CreateReviewRegistry() *Registry {
 	registry.Register(NewLintRunnerTool(tf.workspaceRoot))
 	registry.Register(NewParseTestResultsTool(tf.workspaceRoot))
 	registry.Register(NewParseLintResultsTool(tf.workspaceRoot))
+	// Add clarification tool for review when fixes are ambiguous
+	registry.Register(NewClarificationTool(tf.workspaceRoot))
 
 	return registry
 }
@@ -123,6 +129,7 @@ func (tf *ToolFactory) registerCoreTool(registry *Registry) {
 		NewLintRunnerTool(tf.workspaceRoot),
 		NewParseTestResultsTool(tf.workspaceRoot),
 		NewParseLintResultsTool(tf.workspaceRoot),
+		NewClarificationTool(tf.workspaceRoot),
 	}
 
 	for _, tool := range tools {
@@ -156,5 +163,6 @@ func (tf *ToolFactory) GetAvailableToolNames() []string {
 		"run_linter",
 		"parse_test_results",
 		"parse_lint_results",
+		"request_human_clarification",
 	}
 }

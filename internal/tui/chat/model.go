@@ -4,6 +4,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -194,7 +195,15 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 	if workspaceRoot == "" {
 		workspaceRoot = "." // Fallback to current directory
 	}
-	toolFactory := agent.NewToolFactory(workspaceRoot)
+
+	// Convert workspace root to absolute path to fix list_directory tool access issues
+	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		// If we can't make it absolute, use the original path as fallback
+		absWorkspaceRoot = workspaceRoot
+	}
+
+	toolFactory := agent.NewToolFactory(absWorkspaceRoot)
 	toolRegistry := toolFactory.CreateGenerationRegistry()
 
 	// Create chat service with proper dependencies
@@ -283,6 +292,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle main model logic
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// First, update all components that need width/height information
+		var headerCmd, inputCmd tea.Cmd
+
+		// Update header first to ensure height calculation is current
+		m.header, headerCmd = m.header.Update(msg)
+		if headerCmd != nil {
+			cmds = append(cmds, headerCmd)
+		}
+
 		// Calculate viewport height using centralized layout dimensions with dynamic header
 		textareaHeight := m.inputArea.GetHeight()
 		suggestionAreaHeight := m.inputArea.GetSuggestionAreaHeight()
@@ -297,6 +315,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		if err != nil {
 			logger.Get().Warn("Layout validation failed", "error", err)
+			// In case of layout validation failure, try to use a safe fallback
+			logger.Get().Debug("Layout validation details",
+				"windowHeight", msg.Height,
+				"headerHeight", m.header.GetHeight(),
+				"textareaHeight", textareaHeight,
+				"suggestionAreaHeight", suggestionAreaHeight,
+				"statusBarHeight", m.layout.GetStatusBarHeight(),
+				"viewportFrameHeight", m.layout.GetViewportFrameHeight())
 		}
 
 		// Add debug layout information with dynamic header height
@@ -310,12 +336,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.header,
 		)
 
+		// Ensure viewport height is reasonable
+		if viewportHeight < m.layout.GetMinViewportHeight() {
+			logger.Get().Warn("Calculated viewport height is too small, using minimum",
+				"calculated", viewportHeight,
+				"minimum", m.layout.GetMinViewportHeight())
+			viewportHeight = m.layout.GetMinViewportHeight()
+		}
+
 		m.messageList.SetHeight(viewportHeight)
 
-		// Update input area
-		m.inputArea, cmd = m.inputArea.Update(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+		// Update input area after header calculations are complete
+		m.inputArea, inputCmd = m.inputArea.Update(msg)
+		if inputCmd != nil {
+			cmds = append(cmds, inputCmd)
 		}
 
 	case tea.KeyMsg:

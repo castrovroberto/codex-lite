@@ -2,6 +2,24 @@ package llm
 
 import "context"
 
+// ThoughtResponse represents a structured response from deliberation
+type ThoughtResponse struct {
+	ThoughtContent  string   `json:"thought_content"`
+	Confidence      float64  `json:"confidence"` // 0.0 to 1.0
+	ReasoningSteps  []string `json:"reasoning_steps"`
+	SuggestedAction string   `json:"suggested_action,omitempty"`
+	Uncertainty     string   `json:"uncertainty,omitempty"` // Areas of uncertainty
+}
+
+// ConfidenceAssessment represents confidence in a decision
+type ConfidenceAssessment struct {
+	Score          float64                `json:"score"`          // 0.0 to 1.0
+	Factors        map[string]float64     `json:"factors"`        // Contributing factors
+	Uncertainties  []string               `json:"uncertainties"`  // Areas of uncertainty
+	Recommendation string                 `json:"recommendation"` // Should proceed, retry, or abort
+	Metadata       map[string]interface{} `json:"metadata"`
+}
+
 // Client defines the interface for interacting with a Large Language Model.
 type Client interface {
 	// Generate performs a non-streaming generation request.
@@ -32,6 +50,19 @@ type Client interface {
 
 	// SupportsEmbeddings returns true if the provider supports text embeddings
 	SupportsEmbeddings() bool
+
+	// Extended methods for deliberation support
+
+	// GenerateThought performs a deliberation step to generate internal reasoning
+	// This is used for "thinking before acting" and should return structured thought content
+	GenerateThought(ctx context.Context, modelName, prompt, context string) (*ThoughtResponse, error)
+
+	// AssessConfidence evaluates confidence in a proposed action or decision
+	// Returns a structured confidence assessment with contributing factors
+	AssessConfidence(ctx context.Context, modelName, thought, proposedAction string) (*ConfidenceAssessment, error)
+
+	// SupportsDeliberation returns true if the provider supports deliberation methods
+	SupportsDeliberation() bool
 
 	// TODO: Potentially add methods for token counting, specific model capabilities, etc.
 }

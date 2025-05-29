@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/castrovroberto/CGE/internal/contextkeys"
 	"github.com/castrovroberto/CGE/internal/logger"
@@ -96,15 +97,38 @@ Examples:
 			chatAppModel.LoadHistory(history)
 		}
 
-		// Attempt to force a more compatible color profile for lipgloss
-		lipgloss.SetColorProfile(termenv.ANSI256)
+		// Set more compatible color profile and detect terminal capabilities
+		profile := termenv.ColorProfile()
+		log.Debug("Detected terminal color profile", "profile", profile)
 
-		// Create and run the Bubble Tea program with mouse support
-		p := tea.NewProgram(
-			chatAppModel,
+		// Log terminal environment for debugging
+		log.Debug("Terminal environment details",
+			"TERM", os.Getenv("TERM"),
+			"COLORTERM", os.Getenv("COLORTERM"),
+			"TERM_PROGRAM", os.Getenv("TERM_PROGRAM"),
+			"color_profile", profile)
+
+		// Use detected profile or fallback to safe ANSI if there are issues
+		switch profile {
+		case termenv.TrueColor, termenv.ANSI256:
+			lipgloss.SetColorProfile(profile)
+			log.Debug("Using detected color profile", "profile", profile)
+		default:
+			// Fallback to ANSI for better compatibility
+			lipgloss.SetColorProfile(termenv.ANSI)
+			log.Debug("Using ANSI color profile for compatibility")
+		}
+
+		// Create and run the Bubble Tea program with enhanced options
+		programOptions := []tea.ProgramOption{
 			tea.WithAltScreen(),
 			tea.WithMouseAllMotion(),
-		)
+		}
+
+		// Add input sanitization for better terminal control sequence handling
+		programOptions = append(programOptions, tea.WithInputTTY())
+
+		p := tea.NewProgram(chatAppModel, programOptions...)
 
 		if _, err := p.Run(); err != nil {
 			log.Error("Chat TUI failed", "error", err)

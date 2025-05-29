@@ -60,8 +60,14 @@ var sessionListCmd = &cobra.Command{
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// Initialize audit logger
-		auditLogger, err := audit.NewAuditLogger(workspaceRoot, "session-list")
+		auditLogger, err := audit.NewAuditLogger(absWorkspaceRoot, "session-list")
 		if err != nil {
 			logger.Warn("Failed to initialize audit logger", "error", err)
 		}
@@ -72,7 +78,7 @@ var sessionListCmd = &cobra.Command{
 		}()
 
 		// Initialize session manager
-		sessionManager, err := orchestrator.NewSessionManager(workspaceRoot, auditLogger)
+		sessionManager, err := orchestrator.NewSessionManager(absWorkspaceRoot, auditLogger)
 		if err != nil {
 			return fmt.Errorf("failed to initialize session manager: %w", err)
 		}
@@ -140,8 +146,14 @@ var sessionResumeCmd = &cobra.Command{
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// Initialize audit logger
-		auditLogger, err := audit.NewAuditLogger(workspaceRoot, "session-resume")
+		auditLogger, err := audit.NewAuditLogger(absWorkspaceRoot, "session-resume")
 		if err != nil {
 			logger.Warn("Failed to initialize audit logger", "error", err)
 		}
@@ -152,7 +164,7 @@ var sessionResumeCmd = &cobra.Command{
 		}()
 
 		// Initialize session manager
-		sessionManager, err := orchestrator.NewSessionManager(workspaceRoot, auditLogger)
+		sessionManager, err := orchestrator.NewSessionManager(absWorkspaceRoot, auditLogger)
 		if err != nil {
 			return fmt.Errorf("failed to initialize session manager: %w", err)
 		}
@@ -183,7 +195,7 @@ var sessionResumeCmd = &cobra.Command{
 		}
 
 		// Initialize tool registry based on session command
-		toolFactory := agent.NewToolFactory(workspaceRoot)
+		toolFactory := agent.NewToolFactory(absWorkspaceRoot)
 		var toolRegistry *agent.Registry
 		switch session.Command {
 		case "plan":
@@ -256,8 +268,14 @@ var sessionInfoCmd = &cobra.Command{
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// Initialize audit logger
-		auditLogger, err := audit.NewAuditLogger(workspaceRoot, "session-info")
+		auditLogger, err := audit.NewAuditLogger(absWorkspaceRoot, "session-info")
 		if err != nil {
 			logger.Warn("Failed to initialize audit logger", "error", err)
 		}
@@ -268,7 +286,7 @@ var sessionInfoCmd = &cobra.Command{
 		}()
 
 		// Initialize session manager
-		sessionManager, err := orchestrator.NewSessionManager(workspaceRoot, auditLogger)
+		sessionManager, err := orchestrator.NewSessionManager(absWorkspaceRoot, auditLogger)
 		if err != nil {
 			return fmt.Errorf("failed to initialize session manager: %w", err)
 		}
@@ -378,8 +396,14 @@ var sessionExportCmd = &cobra.Command{
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// Initialize audit logger
-		auditLogger, err := audit.NewAuditLogger(workspaceRoot, "session-export")
+		auditLogger, err := audit.NewAuditLogger(absWorkspaceRoot, "session-export")
 		if err != nil {
 			logger.Warn("Failed to initialize audit logger", "error", err)
 		}
@@ -390,7 +414,7 @@ var sessionExportCmd = &cobra.Command{
 		}()
 
 		// Initialize session manager
-		sessionManager, err := orchestrator.NewSessionManager(workspaceRoot, auditLogger)
+		sessionManager, err := orchestrator.NewSessionManager(absWorkspaceRoot, auditLogger)
 		if err != nil {
 			return fmt.Errorf("failed to initialize session manager: %w", err)
 		}
@@ -403,7 +427,7 @@ var sessionExportCmd = &cobra.Command{
 
 		// Make path absolute
 		if !filepath.IsAbs(outputPath) {
-			outputPath = filepath.Join(workspaceRoot, outputPath)
+			outputPath = filepath.Join(absWorkspaceRoot, outputPath)
 		}
 
 		// Export session
@@ -435,8 +459,14 @@ var sessionAnalyticsCmd = &cobra.Command{
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// Initialize audit logger
-		auditLogger, err := audit.NewAuditLogger(workspaceRoot, "session-analytics")
+		auditLogger, err := audit.NewAuditLogger(absWorkspaceRoot, "session-analytics")
 		if err != nil {
 			logger.Warn("Failed to initialize audit logger", "error", err)
 		}
@@ -447,7 +477,7 @@ var sessionAnalyticsCmd = &cobra.Command{
 		}()
 
 		// Initialize session manager
-		sessionManager, err := orchestrator.NewSessionManager(workspaceRoot, auditLogger)
+		sessionManager, err := orchestrator.NewSessionManager(absWorkspaceRoot, auditLogger)
 		if err != nil {
 			return fmt.Errorf("failed to initialize session manager: %w", err)
 		}
@@ -544,8 +574,14 @@ var sessionCleanupCmd = &cobra.Command{
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// Initialize audit logger
-		auditLogger, err := audit.NewAuditLogger(workspaceRoot, "session-cleanup")
+		auditLogger, err := audit.NewAuditLogger(absWorkspaceRoot, "session-cleanup")
 		if err != nil {
 			logger.Warn("Failed to initialize audit logger", "error", err)
 		}
@@ -556,7 +592,7 @@ var sessionCleanupCmd = &cobra.Command{
 		}()
 
 		// Initialize session manager
-		sessionManager, err := orchestrator.NewSessionManager(workspaceRoot, auditLogger)
+		sessionManager, err := orchestrator.NewSessionManager(absWorkspaceRoot, auditLogger)
 		if err != nil {
 			return fmt.Errorf("failed to initialize session manager: %w", err)
 		}

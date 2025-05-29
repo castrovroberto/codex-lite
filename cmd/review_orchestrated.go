@@ -98,8 +98,14 @@ Example:
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// Initialize tool registry with review tools
-		toolFactory := agent.NewToolFactory(workspaceRoot)
+		toolFactory := agent.NewToolFactory(absWorkspaceRoot)
 		toolRegistry := toolFactory.CreateReviewRegistry()
 
 		// Create command integrator and execute review

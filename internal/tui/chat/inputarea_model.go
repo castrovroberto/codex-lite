@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/castrovroberto/CGE/internal/logger"
@@ -48,21 +49,52 @@ func NewInputAreaModel(theme *Theme, availableCommands []string) *InputAreaModel
 	}
 }
 
+// sanitizeInput removes potentially problematic control sequences from input
+func sanitizeInput(input string) string {
+	// Remove OSC sequences (]11;rgb:..., etc.)
+	oscPattern := regexp.MustCompile(`\x1b\][0-9;]*[a-zA-Z]`)
+	input = oscPattern.ReplaceAllString(input, "")
+
+	// Remove CSI sequences ([1;1R, etc.)
+	csiPattern := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	input = csiPattern.ReplaceAllString(input, "")
+
+	// Remove other escape sequences that might cause issues
+	escPattern := regexp.MustCompile(`\x1b[0-9;]*[a-zA-Z]`)
+	input = escPattern.ReplaceAllString(input, "")
+
+	return input
+}
+
 // Update handles input area updates
 func (i *InputAreaModel) Update(msg tea.Msg) (*InputAreaModel, tea.Cmd) {
-   var cmd tea.Cmd
+	var cmd tea.Cmd
 
-   // Intercept window resize to adjust width only, avoid passing resize to textarea
-   if wmsg, ok := msg.(tea.WindowSizeMsg); ok {
-       i.width = wmsg.Width
-       i.textarea.SetWidth(wmsg.Width)
-       return i, nil
-   }
+	// Handle window resize: update our width but ALSO pass to textarea
+	if wmsg, ok := msg.(tea.WindowSizeMsg); ok {
+		i.width = wmsg.Width
+		i.textarea.SetWidth(wmsg.Width)
+		// IMPORTANT: Pass the resize message to textarea as well to prevent control sequence issues
+		i.textarea, cmd = i.textarea.Update(msg)
+		return i, cmd
+	}
+
 	// Update textarea for other messages
 	i.textarea, cmd = i.textarea.Update(msg)
 
 	// Only update suggestions if the input value actually changed
 	currentValue := i.textarea.Value()
+
+	// Sanitize the input to remove any control sequences that might have leaked through
+	sanitizedValue := sanitizeInput(currentValue)
+	if sanitizedValue != currentValue {
+		logger.Get().Debug("Sanitized control sequences from input",
+			"original_length", len(currentValue),
+			"sanitized_length", len(sanitizedValue))
+		i.textarea.SetValue(sanitizedValue)
+		currentValue = sanitizedValue
+	}
+
 	if currentValue != i.lastInputValue {
 		i.lastInputValue = currentValue
 		i.updateSuggestions(currentValue)

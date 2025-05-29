@@ -53,6 +53,41 @@ func (m *MockLLMClient) SupportsEmbeddings() bool {
 	return true
 }
 
+// GenerateThought implements the deliberation interface for testing
+func (m *MockLLMClient) GenerateThought(ctx context.Context, modelName, prompt, context string) (*llm.ThoughtResponse, error) {
+	return &llm.ThoughtResponse{
+		ThoughtContent: "Mock thought: I need to analyze this situation carefully.",
+		Confidence:     0.8,
+		ReasoningSteps: []string{
+			"Consider the context",
+			"Evaluate options",
+			"Assess risks",
+		},
+		SuggestedAction: "Proceed with the planned action",
+		Uncertainty:     "Some uncertainty about edge cases",
+	}, nil
+}
+
+// AssessConfidence implements the deliberation interface for testing
+func (m *MockLLMClient) AssessConfidence(ctx context.Context, modelName, thought, proposedAction string) (*llm.ConfidenceAssessment, error) {
+	return &llm.ConfidenceAssessment{
+		Score: 0.75,
+		Factors: map[string]float64{
+			"clarity":     0.8,
+			"feasibility": 0.7,
+			"safety":      0.9,
+		},
+		Uncertainties:  []string{"Unknown edge cases", "External dependencies"},
+		Recommendation: "proceed",
+		Metadata:       map[string]interface{}{"mock": true},
+	}, nil
+}
+
+// SupportsDeliberation implements the deliberation interface for testing
+func (m *MockLLMClient) SupportsDeliberation() bool {
+	return true
+}
+
 // MockTool for testing
 type MockTool struct {
 	name        string

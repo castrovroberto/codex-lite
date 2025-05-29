@@ -71,6 +71,27 @@ type AppConfig struct {
 		} `mapstructure:"list_directory"`
 	} `mapstructure:"tools"`
 
+	// Deliberation configuration for advanced reasoning
+	Deliberation struct {
+		Enabled             bool    `mapstructure:"enabled"`
+		ConfidenceThreshold float64 `mapstructure:"confidence_threshold"` // 0.7 default
+		MaxThoughtDepth     int     `mapstructure:"max_thought_depth"`    // 3 default
+		RequireExplanation  bool    `mapstructure:"require_explanation"`  // true default
+		ThoughtTimeout      int     `mapstructure:"thought_timeout"`      // seconds, 30 default
+		EnableReflection    bool    `mapstructure:"enable_reflection"`    // false default
+		Templates           struct {
+			Planning   string `mapstructure:"planning"`   // Path to planning thought template
+			Execution  string `mapstructure:"execution"`  // Path to execution thought template
+			Reflection string `mapstructure:"reflection"` // Path to reflection template
+			Confidence string `mapstructure:"confidence"` // Path to confidence assessment template
+		} `mapstructure:"templates"`
+		SafetyChecks struct {
+			VerifyHighRiskActions bool     `mapstructure:"verify_high_risk_actions"` // true default
+			RequireConfirmation   bool     `mapstructure:"require_confirmation"`     // false default
+			HighRiskPatterns      []string `mapstructure:"high_risk_patterns"`       // Patterns to flag
+		} `mapstructure:"safety_checks"`
+	} `mapstructure:"deliberation"`
+
 	// Old fields - to be reviewed/migrated or removed
 	ChatSystemPromptFile          string        `mapstructure:"chat_system_prompt_file"`
 	MaxAgentConcurrency           int           `mapstructure:"max_agent_concurrency"`
@@ -160,6 +181,42 @@ func (ac *AppConfig) GetToolFactoryConfig() agent.ToolFactoryConfig {
 	return agent.ToolFactoryConfig{
 		ListDirectory: &listDirConfig,
 		// Future tool configs will be added here
+	}
+}
+
+// DeliberationConfig holds deliberation-specific configuration
+type DeliberationConfig struct {
+	Enabled             bool     `json:"enabled"`
+	ConfidenceThreshold float64  `json:"confidence_threshold"`
+	MaxThoughtDepth     int      `json:"max_thought_depth"`
+	RequireExplanation  bool     `json:"require_explanation"`
+	ThoughtTimeout      int      `json:"thought_timeout"`
+	EnableReflection    bool     `json:"enable_reflection"`
+	PlanningTemplate    string   `json:"planning_template"`
+	ExecutionTemplate   string   `json:"execution_template"`
+	ReflectionTemplate  string   `json:"reflection_template"`
+	ConfidenceTemplate  string   `json:"confidence_template"`
+	VerifyHighRisk      bool     `json:"verify_high_risk"`
+	RequireConfirmation bool     `json:"require_confirmation"`
+	HighRiskPatterns    []string `json:"high_risk_patterns"`
+}
+
+// GetDeliberationConfig extracts deliberation configuration
+func (ac *AppConfig) GetDeliberationConfig() DeliberationConfig {
+	return DeliberationConfig{
+		Enabled:             ac.Deliberation.Enabled,
+		ConfidenceThreshold: ac.Deliberation.ConfidenceThreshold,
+		MaxThoughtDepth:     ac.Deliberation.MaxThoughtDepth,
+		RequireExplanation:  ac.Deliberation.RequireExplanation,
+		ThoughtTimeout:      ac.Deliberation.ThoughtTimeout,
+		EnableReflection:    ac.Deliberation.EnableReflection,
+		PlanningTemplate:    ac.Deliberation.Templates.Planning,
+		ExecutionTemplate:   ac.Deliberation.Templates.Execution,
+		ReflectionTemplate:  ac.Deliberation.Templates.Reflection,
+		ConfidenceTemplate:  ac.Deliberation.Templates.Confidence,
+		VerifyHighRisk:      ac.Deliberation.SafetyChecks.VerifyHighRiskActions,
+		RequireConfirmation: ac.Deliberation.SafetyChecks.RequireConfirmation,
+		HighRiskPatterns:    ac.Deliberation.SafetyChecks.HighRiskPatterns,
 	}
 }
 

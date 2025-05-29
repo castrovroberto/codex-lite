@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -446,6 +447,141 @@ func (oc *OllamaClient) Embed(ctx context.Context, text string) ([]float32, erro
 // SupportsEmbeddings returns true as Ollama supports embedding models like nomic-embed-text
 func (oc *OllamaClient) SupportsEmbeddings() bool {
 	return true
+}
+
+// GenerateThought performs deliberation step for internal reasoning (fallback implementation)
+func (oc *OllamaClient) GenerateThought(ctx context.Context, modelName, prompt, context string) (*ThoughtResponse, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+
+	// For Ollama, we'll simulate deliberation using structured prompts
+	thoughtPrompt := fmt.Sprintf(`
+Think step by step about this situation. Provide your analysis in the following format:
+
+CONTEXT: %s
+
+SITUATION: %s
+
+ANALYSIS:
+- What are the key factors to consider?
+- What are the potential risks?
+- What are the potential benefits?
+- What is your confidence level (0.0-1.0)?
+- What action would you suggest?
+
+Please structure your response clearly and provide a confidence score.`, context, prompt)
+
+	response, err := oc.Generate(ctx, modelName, thoughtPrompt, "You are a careful, analytical assistant that thinks before acting.", nil)
+	if err != nil {
+		log.Error("Thought generation failed", "error", err)
+		return nil, fmt.Errorf("ollama thought generation failed: %w", err)
+	}
+
+	// Parse the structured response
+	thoughtResponse := &ThoughtResponse{
+		ThoughtContent: response,
+		Confidence:     0.5, // Default confidence
+		ReasoningSteps: []string{},
+	}
+
+	// Try to extract confidence score from response
+	lines := strings.Split(response, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(strings.ToLower(line), "confidence") {
+			// Simple pattern matching for confidence scores
+			for _, word := range strings.Fields(line) {
+				if score, err := strconv.ParseFloat(word, 64); err == nil && score >= 0.0 && score <= 1.0 {
+					thoughtResponse.Confidence = score
+					break
+				}
+			}
+		}
+		if strings.HasPrefix(strings.ToLower(line), "- ") {
+			thoughtResponse.ReasoningSteps = append(thoughtResponse.ReasoningSteps, strings.TrimPrefix(line, "- "))
+		}
+	}
+
+	log.Debug("Generated thought with Ollama", "confidence", thoughtResponse.Confidence, "reasoning_steps", len(thoughtResponse.ReasoningSteps))
+	return thoughtResponse, nil
+}
+
+// AssessConfidence evaluates confidence in a proposed action (fallback implementation)
+func (oc *OllamaClient) AssessConfidence(ctx context.Context, modelName, thought, proposedAction string) (*ConfidenceAssessment, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+
+	confidencePrompt := fmt.Sprintf(`
+Assess the confidence in this proposed action based on the reasoning provided.
+
+REASONING: %s
+
+PROPOSED ACTION: %s
+
+Please evaluate:
+1. How confident are you in this action? (0.0 = no confidence, 1.0 = completely confident)
+2. What are the main factors supporting this decision?
+3. What are the main uncertainties or risks?
+4. Would you recommend to: proceed, retry, or abort?
+
+Provide your assessment with a confidence score between 0.0 and 1.0.`, thought, proposedAction)
+
+	response, err := oc.Generate(ctx, modelName, confidencePrompt, "You are a careful evaluator that assesses the confidence and risks of proposed actions.", nil)
+	if err != nil {
+		log.Error("Confidence assessment failed", "error", err)
+		return nil, fmt.Errorf("ollama confidence assessment failed: %w", err)
+	}
+
+	// Parse the confidence assessment
+	assessment := &ConfidenceAssessment{
+		Score:          0.5, // Default
+		Factors:        make(map[string]float64),
+		Uncertainties:  []string{},
+		Recommendation: "proceed", // Default
+		Metadata:       map[string]interface{}{"raw_response": response},
+	}
+
+	// Simple parsing for confidence score and recommendation
+	lines := strings.Split(response, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Look for confidence scores
+		if strings.Contains(strings.ToLower(line), "confidence") {
+			for _, word := range strings.Fields(line) {
+				if score, err := strconv.ParseFloat(word, 64); err == nil && score >= 0.0 && score <= 1.0 {
+					assessment.Score = score
+					break
+				}
+			}
+		}
+
+		// Look for recommendations
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "recommend") {
+			if strings.Contains(lower, "abort") {
+				assessment.Recommendation = "abort"
+			} else if strings.Contains(lower, "retry") {
+				assessment.Recommendation = "retry"
+			} else if strings.Contains(lower, "proceed") {
+				assessment.Recommendation = "proceed"
+			}
+		}
+
+		// Extract uncertainties
+		if strings.Contains(strings.ToLower(line), "uncertainty") || strings.Contains(strings.ToLower(line), "risk") {
+			if strings.HasPrefix(line, "- ") {
+				assessment.Uncertainties = append(assessment.Uncertainties, strings.TrimPrefix(line, "- "))
+			}
+		}
+	}
+
+	log.Debug("Generated confidence assessment with Ollama", "score", assessment.Score, "recommendation", assessment.Recommendation)
+	return assessment, nil
+}
+
+// SupportsDeliberation returns false for Ollama as it doesn't have native deliberation support
+// but we provide fallback implementations
+func (oc *OllamaClient) SupportsDeliberation() bool {
+	return false // Using fallback implementations
 }
 
 func min(a, b int) int {

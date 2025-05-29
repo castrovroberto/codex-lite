@@ -92,8 +92,20 @@ func (h *HeaderModel) Update(msg tea.Msg) (*HeaderModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		h.width = msg.Width
-		// Enable bordered display for wider terminals
+		// Enable bordered display for wider terminals with better threshold
 		h.multiLine = msg.Width >= 80 // Lower threshold since we have nice borders
+
+		// Refresh git info on resize in case working directory changed
+		if h.gitRepo {
+			// Only refresh git info if we're still in a git repo
+			newBranch, newRepo := getGitInfo(h.workingDir)
+			if newRepo {
+				h.gitBranch = newBranch
+			} else {
+				h.gitRepo = false
+				h.gitBranch = ""
+			}
+		}
 	}
 	return h, nil
 }

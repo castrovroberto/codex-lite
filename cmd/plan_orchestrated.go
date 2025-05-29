@@ -72,8 +72,14 @@ Example:
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// 3. Initialize tool registry with planning tools
-		toolFactory := agent.NewToolFactory(workspaceRoot)
+		toolFactory := agent.NewToolFactory(absWorkspaceRoot)
 		toolRegistry := toolFactory.CreatePlanningRegistry()
 
 		// 4. Gather initial codebase context (lightweight)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/castrovroberto/CGE/internal/config"
@@ -336,6 +337,199 @@ func (oc *OpenAIClient) Embed(ctx context.Context, text string) ([]float32, erro
 
 // SupportsEmbeddings returns true as OpenAI supports embedding models
 func (oc *OpenAIClient) SupportsEmbeddings() bool {
+	return true
+}
+
+// GenerateThought performs deliberation step for internal reasoning using OpenAI
+func (oc *OpenAIClient) GenerateThought(ctx context.Context, modelName, prompt, context string) (*ThoughtResponse, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+
+	// Create a structured prompt for thought generation
+	thoughtPrompt := fmt.Sprintf(`
+You are an AI assistant that thinks carefully before acting. Please analyze the following situation step by step.
+
+CONTEXT: %s
+
+CURRENT SITUATION: %s
+
+Please provide your analysis in the following structured format:
+
+THOUGHT PROCESS:
+1. Key factors to consider:
+2. Potential risks:
+3. Potential benefits:
+4. Confidence level (0.0-1.0):
+5. Suggested action:
+6. Areas of uncertainty:
+
+Be thorough in your analysis and provide a confidence score between 0.0 and 1.0.`, context, prompt)
+
+	messages := []OpenAIMessage{
+		{Role: "system", Content: "You are a careful, analytical assistant that provides structured reasoning before taking action."},
+		{Role: "user", Content: thoughtPrompt},
+	}
+
+	request := OpenAIRequest{
+		Model:       modelName,
+		Messages:    messages,
+		Temperature: 0.3, // Lower temperature for more consistent reasoning
+		MaxTokens:   1000,
+	}
+
+	response, err := oc.makeRequest(ctx, request)
+	if err != nil {
+		log.Error("Thought generation failed", "error", err)
+		return nil, fmt.Errorf("openai thought generation failed: %w", err)
+	}
+
+	if len(response.Choices) == 0 {
+		return nil, fmt.Errorf("openai thought generation: no response choices")
+	}
+
+	content := response.Choices[0].Message.Content
+
+	// Parse the structured response
+	thoughtResponse := &ThoughtResponse{
+		ThoughtContent: content,
+		Confidence:     0.5, // Default confidence
+		ReasoningSteps: []string{},
+	}
+
+	// Extract structured information from the response
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Extract confidence score
+		if strings.Contains(strings.ToLower(line), "confidence") {
+			for _, word := range strings.Fields(line) {
+				if score, err := strconv.ParseFloat(word, 64); err == nil && score >= 0.0 && score <= 1.0 {
+					thoughtResponse.Confidence = score
+					break
+				}
+			}
+		}
+
+		// Extract reasoning steps
+		if strings.HasPrefix(line, "1.") || strings.HasPrefix(line, "2.") ||
+			strings.HasPrefix(line, "3.") || strings.HasPrefix(line, "4.") ||
+			strings.HasPrefix(line, "5.") || strings.HasPrefix(line, "6.") {
+			thoughtResponse.ReasoningSteps = append(thoughtResponse.ReasoningSteps, line)
+		}
+
+		// Extract suggested action
+		if strings.Contains(strings.ToLower(line), "suggested action") {
+			thoughtResponse.SuggestedAction = line
+		}
+
+		// Extract uncertainty
+		if strings.Contains(strings.ToLower(line), "uncertainty") {
+			thoughtResponse.Uncertainty = line
+		}
+	}
+
+	log.Debug("Generated thought with OpenAI", "confidence", thoughtResponse.Confidence, "reasoning_steps", len(thoughtResponse.ReasoningSteps))
+	return thoughtResponse, nil
+}
+
+// AssessConfidence evaluates confidence in a proposed action using OpenAI
+func (oc *OpenAIClient) AssessConfidence(ctx context.Context, modelName, thought, proposedAction string) (*ConfidenceAssessment, error) {
+	log := contextkeys.LoggerFromContext(ctx)
+
+	confidencePrompt := fmt.Sprintf(`
+You are an expert evaluator assessing the confidence and risks of proposed actions.
+
+PREVIOUS REASONING: %s
+
+PROPOSED ACTION: %s
+
+Please provide a detailed confidence assessment in the following format:
+
+CONFIDENCE ASSESSMENT:
+1. Overall confidence score (0.0-1.0):
+2. Supporting factors:
+3. Risk factors:
+4. Uncertainties:
+5. Recommendation (proceed/retry/abort):
+6. Rationale for recommendation:
+
+Be precise with your confidence score and provide clear reasoning.`, thought, proposedAction)
+
+	messages := []OpenAIMessage{
+		{Role: "system", Content: "You are a careful evaluator that provides detailed confidence assessments for proposed actions."},
+		{Role: "user", Content: confidencePrompt},
+	}
+
+	request := OpenAIRequest{
+		Model:       modelName,
+		Messages:    messages,
+		Temperature: 0.2, // Very low temperature for consistent evaluation
+		MaxTokens:   800,
+	}
+
+	response, err := oc.makeRequest(ctx, request)
+	if err != nil {
+		log.Error("Confidence assessment failed", "error", err)
+		return nil, fmt.Errorf("openai confidence assessment failed: %w", err)
+	}
+
+	if len(response.Choices) == 0 {
+		return nil, fmt.Errorf("openai confidence assessment: no response choices")
+	}
+
+	content := response.Choices[0].Message.Content
+
+	// Parse the confidence assessment
+	assessment := &ConfidenceAssessment{
+		Score:          0.5, // Default
+		Factors:        make(map[string]float64),
+		Uncertainties:  []string{},
+		Recommendation: "proceed", // Default
+		Metadata:       map[string]interface{}{"raw_response": content},
+	}
+
+	// Parse the structured response
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Extract confidence score
+		if strings.Contains(strings.ToLower(line), "confidence score") {
+			for _, word := range strings.Fields(line) {
+				if score, err := strconv.ParseFloat(word, 64); err == nil && score >= 0.0 && score <= 1.0 {
+					assessment.Score = score
+					break
+				}
+			}
+		}
+
+		// Extract recommendation
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "recommendation") {
+			if strings.Contains(lower, "abort") {
+				assessment.Recommendation = "abort"
+			} else if strings.Contains(lower, "retry") {
+				assessment.Recommendation = "retry"
+			} else if strings.Contains(lower, "proceed") {
+				assessment.Recommendation = "proceed"
+			}
+		}
+
+		// Extract uncertainties
+		if strings.Contains(strings.ToLower(line), "uncertainties") ||
+			strings.Contains(strings.ToLower(line), "risk factors") {
+			if strings.HasPrefix(line, "- ") {
+				assessment.Uncertainties = append(assessment.Uncertainties, strings.TrimPrefix(line, "- "))
+			}
+		}
+	}
+
+	log.Debug("Generated confidence assessment with OpenAI", "score", assessment.Score, "recommendation", assessment.Recommendation)
+	return assessment, nil
+}
+
+// SupportsDeliberation returns true for OpenAI as it can handle structured reasoning well
+func (oc *OpenAIClient) SupportsDeliberation() bool {
 	return true
 }
 

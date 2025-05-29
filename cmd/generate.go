@@ -79,8 +79,14 @@ Example:
 			}
 		}
 
+		// Convert workspace root to absolute path to fix tool access issues
+		absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("failed to convert workspace root to absolute path: %w", err)
+		}
+
 		// 4. Initialize template engine
-		promptsDir := filepath.Join(workspaceRoot, "prompts")
+		promptsDir := filepath.Join(absWorkspaceRoot, "prompts")
 		templateEngine := templates.NewEngine(promptsDir)
 
 		// 5. Process each task
@@ -100,7 +106,7 @@ Example:
 			}
 
 			// Generate code for this task
-			err := processTask(ctx, task, plan, llmClient, templateEngine, workspaceRoot, cfg, logger)
+			err := processTask(ctx, task, plan, llmClient, templateEngine, absWorkspaceRoot, cfg, logger)
 			if err != nil {
 				logger.Error("Failed to process task", "id", task.ID, "error", err)
 				if !dryRun {

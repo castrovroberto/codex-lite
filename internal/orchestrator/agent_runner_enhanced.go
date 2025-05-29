@@ -12,118 +12,14 @@ import (
 	"github.com/castrovroberto/CGE/internal/llm"
 )
 
-// Message represents a message in the conversation history
-type Message struct {
-	Role       string            `json:"role"` // "system", "user", "assistant", "tool"
-	Content    string            `json:"content"`
-	ToolCall   *llm.FunctionCall `json:"tool_call,omitempty"`
-	ToolCallID string            `json:"tool_call_id,omitempty"`
-	Name       string            `json:"name,omitempty"` // Tool name for tool messages
-}
-
-// RunResult represents the result of an agent run
-type RunResult struct {
-	FinalResponse string    `json:"final_response"`
-	Messages      []Message `json:"messages"`
-	ToolCalls     int       `json:"tool_calls"`
-	Iterations    int       `json:"iterations"`
-	Success       bool      `json:"success"`
-	Error         string    `json:"error,omitempty"`
-
-	// Enhanced error tracking
-	ToolRetries  int      `json:"tool_retries,omitempty"`
-	ErrorDetails []string `json:"error_details,omitempty"`
-}
-
-// RunConfig represents configuration for a specific agent run
-type RunConfig struct {
-	MaxIterations     int
-	AllowedTools      []string // If empty, all tools are allowed
-	RequireTextOutput bool     // If true, ensures final response is text
-	TimeoutSeconds    int      // Timeout for the entire run
-
-	// Enhanced error handling configuration
-	MaxToolRetries        int  `json:"max_tool_retries"`         // Max retries per tool call
-	RetryWithModification bool `json:"retry_with_modification"`  // Enable retry prompting
-	EnableErrorAnalysis   bool `json:"enable_error_analysis"`    // Enable enhanced error formatting
-	AbortOnRepeatedErrors bool `json:"abort_on_repeated_errors"` // Abort if same error repeats
-}
-
-// DefaultRunConfig returns default configuration
-func DefaultRunConfig() *RunConfig {
-	return &RunConfig{
-		MaxIterations:         10,
-		AllowedTools:          []string{}, // All tools allowed by default
-		RequireTextOutput:     true,
-		TimeoutSeconds:        300, // 5 minutes
-		MaxToolRetries:        2,   // Allow 2 retries per tool call
-		RetryWithModification: true,
-		EnableErrorAnalysis:   true,
-		AbortOnRepeatedErrors: false,
-	}
-}
-
-// PlanRunConfig returns configuration optimized for planning
-func PlanRunConfig() *RunConfig {
-	return &RunConfig{
-		MaxIterations:         5,                                                           // Planning should be quick
-		AllowedTools:          []string{"read_file", "list_directory", "retrieve_context"}, // Limited tools for planning
-		RequireTextOutput:     true,
-		TimeoutSeconds:        180, // 3 minutes
-		MaxToolRetries:        1,   // Fewer retries for planning
-		RetryWithModification: true,
-		EnableErrorAnalysis:   true,
-		AbortOnRepeatedErrors: true, // Abort quickly for planning
-	}
-}
-
-// GenerateRunConfig returns configuration optimized for code generation
-func GenerateRunConfig() *RunConfig {
-	return &RunConfig{
-		MaxIterations:         15, // Generation might need more iterations
-		AllowedTools:          []string{"read_file", "write_file", "list_directory", "apply_patch_to_file", "run_shell_command"},
-		RequireTextOutput:     false, // Generation might end with tool calls
-		TimeoutSeconds:        600,   // 10 minutes
-		MaxToolRetries:        3,     // More retries for generation
-		RetryWithModification: true,
-		EnableErrorAnalysis:   true,
-		AbortOnRepeatedErrors: false,
-	}
-}
-
-// ReviewRunConfig returns configuration optimized for code review
-func ReviewRunConfig() *RunConfig {
-	return &RunConfig{
-		MaxIterations:         20, // Review might need many iterations
-		AllowedTools:          []string{"read_file", "apply_patch_to_file", "run_tests", "run_linter", "parse_test_results"},
-		RequireTextOutput:     false,
-		TimeoutSeconds:        900, // 15 minutes
-		MaxToolRetries:        2,   // Standard retries for review
-		RetryWithModification: true,
-		EnableErrorAnalysis:   true,
-		AbortOnRepeatedErrors: true, // Abort on repeated errors in review
-	}
-}
-
-// ToolCallAttempt tracks individual tool call attempts for retry logic
-type ToolCallAttempt struct {
-	ToolName     string    `json:"tool_name"`
-	Attempt      int       `json:"attempt"`
-	Parameters   string    `json:"parameters"`
-	ErrorCode    string    `json:"error_code,omitempty"`
-	ErrorMessage string    `json:"error_message,omitempty"`
-	Timestamp    time.Time `json:"timestamp"`
-}
-
-
-// AgentRunner manages the orchestration between LLM and tools
-type AgentRunner struct {
+// EnhancedAgentRunner manages the orchestration between LLM and tools with enhanced error handling
+type EnhancedAgentRunner struct {
 	llmClient      llm.Client
 	toolRegistry   *agent.Registry
 	systemPrompt   string
 	maxIterations  int
 	model          string
-	config         *RunConfig // Add configuration
+	config         *RunConfig
 	sessionManager *SessionManager
 	currentSession *SessionState
 
@@ -133,9 +29,9 @@ type AgentRunner struct {
 	currentRetries map[string]int    `json:"current_retries,omitempty"` // Tool call signature -> retry count
 }
 
-// NewAgentRunner creates a new agent runner
-func NewAgentRunner(llmClient llm.Client, toolRegistry *agent.Registry, systemPrompt string, model string) *AgentRunner {
-	return &AgentRunner{
+// NewEnhancedAgentRunner creates a new enhanced agent runner
+func NewEnhancedAgentRunner(llmClient llm.Client, toolRegistry *agent.Registry, systemPrompt string, model string) *EnhancedAgentRunner {
+	return &EnhancedAgentRunner{
 		llmClient:      llmClient,
 		toolRegistry:   toolRegistry,
 		systemPrompt:   systemPrompt,
@@ -148,9 +44,9 @@ func NewAgentRunner(llmClient llm.Client, toolRegistry *agent.Registry, systemPr
 	}
 }
 
-// NewAgentRunnerWithSession creates a new agent runner with session management
-func NewAgentRunnerWithSession(llmClient llm.Client, toolRegistry *agent.Registry, systemPrompt string, model string, sessionManager *SessionManager) *AgentRunner {
-	return &AgentRunner{
+// NewEnhancedAgentRunnerWithSession creates a new enhanced agent runner with session management
+func NewEnhancedAgentRunnerWithSession(llmClient llm.Client, toolRegistry *agent.Registry, systemPrompt string, model string, sessionManager *SessionManager) *EnhancedAgentRunner {
+	return &EnhancedAgentRunner{
 		llmClient:      llmClient,
 		toolRegistry:   toolRegistry,
 		systemPrompt:   systemPrompt,
@@ -165,18 +61,18 @@ func NewAgentRunnerWithSession(llmClient llm.Client, toolRegistry *agent.Registr
 }
 
 // SetConfig sets the run configuration
-func (ar *AgentRunner) SetConfig(config *RunConfig) {
+func (ar *EnhancedAgentRunner) SetConfig(config *RunConfig) {
 	ar.config = config
 	ar.maxIterations = config.MaxIterations
 }
 
-// Run executes the agent orchestration loop
-func (ar *AgentRunner) Run(ctx context.Context, initialPrompt string) (*RunResult, error) {
+// Run executes the agent orchestration loop with enhanced error handling
+func (ar *EnhancedAgentRunner) Run(ctx context.Context, initialPrompt string) (*RunResult, error) {
 	return ar.RunWithCommand(ctx, initialPrompt, "unknown")
 }
 
-// RunWithCommand executes the agent orchestration loop with command tracking
-func (ar *AgentRunner) RunWithCommand(ctx context.Context, initialPrompt string, command string) (*RunResult, error) {
+// RunWithCommand executes the agent orchestration loop with command tracking and enhanced error handling
+func (ar *EnhancedAgentRunner) RunWithCommand(ctx context.Context, initialPrompt string, command string) (*RunResult, error) {
 	log := contextkeys.LoggerFromContext(ctx)
 
 	// Apply timeout from configuration
@@ -212,25 +108,14 @@ func (ar *AgentRunner) RunWithCommand(ctx context.Context, initialPrompt string,
 	iterations := 0
 	errorDetails := make([]string, 0)
 
-	// Count existing tool calls if resuming
-	if ar.currentSession != nil {
-		toolCalls = len(ar.currentSession.ToolCalls)
-		// Estimate iterations from message history
-		for _, msg := range messages {
-			if msg.Role == "assistant" {
-				iterations++
-			}
-		}
-	}
-
-	log.Info("Starting agent orchestration", "max_iterations", ar.maxIterations, "session_id", func() string {
+	log.Info("Starting enhanced agent orchestration", "max_iterations", ar.maxIterations, "session_id", func() string {
 		if ar.currentSession != nil {
 			return ar.currentSession.SessionID
 		}
 		return "none"
 	}())
 
-	// Main orchestration loop
+	// Main orchestration loop with enhanced error handling
 	for iterations < ar.maxIterations {
 		iterations++
 		log.Debug("Agent iteration", "iteration", iterations)
@@ -272,9 +157,6 @@ func (ar *AgentRunner) RunWithCommand(ctx context.Context, initialPrompt string,
 			// Update session if available
 			if ar.currentSession != nil {
 				ar.currentSession.Messages = messages
-
-				// TODO: Fix type conflicts between local ToolCallRecord and session_manager.ToolCallRecord
-				// For now, just save messages
 				ar.sessionManager.SaveSession(ar.currentSession)
 			}
 
@@ -407,9 +289,6 @@ func (ar *AgentRunner) RunWithCommand(ctx context.Context, initialPrompt string,
 			// Update session if available
 			if ar.currentSession != nil {
 				ar.currentSession.Messages = messages
-
-				// TODO: Fix type conflicts between local ToolCallRecord and session_manager.ToolCallRecord
-				// For now, just save messages
 				ar.sessionManager.SaveSession(ar.currentSession)
 			}
 		}
@@ -456,8 +335,10 @@ func (ar *AgentRunner) RunWithCommand(ctx context.Context, initialPrompt string,
 	}, nil
 }
 
+// Helper methods (reusing from original AgentRunner)
+
 // prepareToolDefinitions converts registry tools to LLM tool definitions
-func (ar *AgentRunner) prepareToolDefinitions() []llm.ToolDefinition {
+func (ar *EnhancedAgentRunner) prepareToolDefinitions() []llm.ToolDefinition {
 	allTools := ar.toolRegistry.List()
 
 	// Filter tools based on configuration
@@ -492,7 +373,7 @@ func (ar *AgentRunner) prepareToolDefinitions() []llm.ToolDefinition {
 }
 
 // buildPromptFromMessages builds a prompt string from message history
-func (ar *AgentRunner) buildPromptFromMessages(messages []Message) string {
+func (ar *EnhancedAgentRunner) buildPromptFromMessages(messages []Message) string {
 	var parts []string
 
 	for _, msg := range messages {
@@ -517,7 +398,7 @@ func (ar *AgentRunner) buildPromptFromMessages(messages []Message) string {
 }
 
 // executeTool executes a function call using the tool registry
-func (ar *AgentRunner) executeTool(ctx context.Context, functionCall *llm.FunctionCall) (*agent.ToolResult, error) {
+func (ar *EnhancedAgentRunner) executeTool(ctx context.Context, functionCall *llm.FunctionCall) (*agent.ToolResult, error) {
 	// Look up tool in registry
 	tool, exists := ar.toolRegistry.Get(functionCall.Name)
 	if !exists {
@@ -543,8 +424,11 @@ func (ar *AgentRunner) executeTool(ctx context.Context, functionCall *llm.Functi
 }
 
 // formatToolResult formats a tool result for inclusion in message history
-func (ar *AgentRunner) formatToolResult(result *agent.ToolResult) string {
+func (ar *EnhancedAgentRunner) formatToolResult(result *agent.ToolResult) string {
 	if !result.Success {
+		if result.StandardizedError != nil {
+			return result.StandardizedError.FormatForLLM()
+		}
 		return fmt.Sprintf("Error: %s", result.Error)
 	}
 
@@ -560,7 +444,7 @@ func (ar *AgentRunner) formatToolResult(result *agent.ToolResult) string {
 }
 
 // isFinalAnswer determines if a text response should be treated as final
-func (ar *AgentRunner) isFinalAnswer(content string, iteration int) bool {
+func (ar *EnhancedAgentRunner) isFinalAnswer(content string, iteration int) bool {
 	content = strings.ToLower(strings.TrimSpace(content))
 
 	// If we're at max iterations, treat any text as final
@@ -594,92 +478,122 @@ func (ar *AgentRunner) isFinalAnswer(content string, iteration int) bool {
 	return false
 }
 
+// Enhanced error handling methods
+
+// getToolCallSignature returns a unique signature for a tool call
+func (ar *EnhancedAgentRunner) getToolCallSignature(functionCall *llm.FunctionCall) string {
+	return fmt.Sprintf("%s:%s", functionCall.Name, string(functionCall.Arguments))
+}
+
+// buildRetryPrompt builds a retry prompt for the LLM
+func (ar *EnhancedAgentRunner) buildRetryPrompt(functionCall *llm.FunctionCall, toolResult *agent.ToolResult, attempt int) string {
+	var prompt strings.Builder
+
+	prompt.WriteString(fmt.Sprintf("Your previous attempt to use the tool '%s' failed (attempt %d of %d).\n\n",
+		functionCall.Name, attempt, ar.config.MaxToolRetries+1))
+
+	if toolResult.StandardizedError != nil {
+		prompt.WriteString("ERROR DETAILS:\n")
+		prompt.WriteString(toolResult.StandardizedError.FormatForLLM())
+		prompt.WriteString("\n\n")
+	} else {
+		prompt.WriteString(fmt.Sprintf("Error: %s\n\n", toolResult.Error))
+	}
+
+	prompt.WriteString("INSTRUCTIONS FOR RETRY:\n")
+	prompt.WriteString("1. Carefully review the error message above\n")
+	prompt.WriteString("2. Identify what went wrong with your parameters\n")
+	prompt.WriteString("3. Provide a corrected tool call with the proper parameters\n")
+	prompt.WriteString("4. If you cannot fix the issue, explain why and suggest an alternative approach\n\n")
+
+	prompt.WriteString("Please provide your corrected response:")
+
+	return prompt.String()
+}
+
+// shouldRetryToolCall determines if a tool call should be retried
+func (ar *EnhancedAgentRunner) shouldRetryToolCall(toolResult *agent.ToolResult, retryCount int, callSignature string) bool {
+	// Don't retry if we've exceeded max retries
+	if retryCount >= ar.config.MaxToolRetries {
+		return false
+	}
+
+	// Don't retry if retry modification is disabled
+	if !ar.config.RetryWithModification {
+		return false
+	}
+
+	// Don't retry certain types of errors
+	if toolResult.StandardizedError != nil {
+		errorCode := toolResult.StandardizedError.Code
+
+		// Don't retry these error types as they're unlikely to be fixed by retry
+		nonRetriableErrors := []agent.ToolErrorCode{
+			agent.ErrorCodeUnsupportedOperation,
+			agent.ErrorCodeInternalError,
+			agent.ErrorCodeFileAlreadyExists, // Usually intentional
+		}
+
+		for _, nonRetriable := range nonRetriableErrors {
+			if errorCode == nonRetriable {
+				return false
+			}
+		}
+
+		// Check for repeated errors if abort on repeated errors is enabled
+		if ar.config.AbortOnRepeatedErrors {
+			if count := ar.errorHistory[string(errorCode)]; count > 2 {
+				return false // Same error happened too many times
+			}
+		}
+	}
+
+	return true
+}
+
 // GetMessageHistory returns the current message history
-func (ar *AgentRunner) GetMessageHistory() []Message {
+func (ar *EnhancedAgentRunner) GetMessageHistory() []Message {
 	if ar.currentSession != nil {
 		return ar.currentSession.Messages
 	}
 	return []Message{}
 }
 
-// ResumeSession resumes an existing session
-func (ar *AgentRunner) ResumeSession(sessionID string) error {
-	if ar.sessionManager == nil {
-		return fmt.Errorf("session manager not available")
+// GetErrorAnalytics returns error analytics for the current run
+func (ar *EnhancedAgentRunner) GetErrorAnalytics() map[string]interface{} {
+	return map[string]interface{}{
+		"tool_attempts":   ar.toolAttempts,
+		"error_history":   ar.errorHistory,
+		"current_retries": ar.currentRetries,
+		"total_attempts":  len(ar.toolAttempts),
+		"failed_attempts": ar.countFailedAttempts(),
+		"retry_rate":      ar.calculateRetryRate(),
 	}
-
-	session, err := ar.sessionManager.LoadSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to load session: %w", err)
-	}
-
-	// Validate session compatibility
-	if session.Model != ar.model {
-		return fmt.Errorf("session model (%s) does not match current model (%s)", session.Model, ar.model)
-	}
-
-	if session.SystemPrompt != ar.systemPrompt {
-		return fmt.Errorf("session system prompt does not match current system prompt")
-	}
-
-	// Update session state to running if it was paused
-	if session.CurrentState == "paused" {
-		ar.sessionManager.UpdateSessionState(session, "running")
-	}
-
-	ar.currentSession = session
-	return nil
 }
 
-// PauseSession pauses the current session
-func (ar *AgentRunner) PauseSession() error {
-	if ar.sessionManager == nil || ar.currentSession == nil {
-		return fmt.Errorf("no active session to pause")
+// countFailedAttempts counts the number of failed tool attempts
+func (ar *EnhancedAgentRunner) countFailedAttempts() int {
+	count := 0
+	for _, attempt := range ar.toolAttempts {
+		if attempt.ErrorMessage != "" {
+			count++
+		}
 	}
-
-	ar.sessionManager.UpdateSessionState(ar.currentSession, "paused")
-	return ar.sessionManager.SaveSession(ar.currentSession)
+	return count
 }
 
-// GetCurrentSessionID returns the current session ID
-func (ar *AgentRunner) GetCurrentSessionID() string {
-	if ar.currentSession != nil {
-		return ar.currentSession.SessionID
-	}
-	return ""
-}
-
-// GetSessionState returns the current session state
-func (ar *AgentRunner) GetSessionState() *SessionState {
-	return ar.currentSession
-}
-
-// getToolCallSignature returns a unique signature for a tool call
-func (ar *AgentRunner) getToolCallSignature(functionCall *llm.FunctionCall) string {
-	return fmt.Sprintf("%s:%s", functionCall.Name, string(functionCall.Arguments))
-}
-
-// buildRetryPrompt builds a retry prompt for the LLM
-func (ar *AgentRunner) buildRetryPrompt(functionCall *llm.FunctionCall, toolResult *agent.ToolResult, attempt int) string {
-	retryPrompt := fmt.Sprintf("Retry %d for %s", attempt, functionCall.Name)
-	if toolResult.StandardizedError != nil {
-		retryPrompt += fmt.Sprintf(": %s", toolResult.StandardizedError.Error())
-	} else {
-		retryPrompt += fmt.Sprintf(": %s", toolResult.Error)
-	}
-	retryPrompt += "\n\nPlease provide a revised response or additional information to proceed."
-	return retryPrompt
-}
-
-// shouldRetryToolCall determines if a tool call should be retried
-func (ar *AgentRunner) shouldRetryToolCall(toolResult *agent.ToolResult, retryCount int, callSignature string) bool {
-	if retryCount >= ar.config.MaxToolRetries {
-		return false
+// calculateRetryRate calculates the retry rate
+func (ar *EnhancedAgentRunner) calculateRetryRate() float64 {
+	if len(ar.toolAttempts) == 0 {
+		return 0.0
 	}
 
-	if ar.config.RetryWithModification && toolResult.StandardizedError != nil {
-		return true
+	retries := 0
+	for _, attempt := range ar.toolAttempts {
+		if attempt.Attempt > 1 {
+			retries++
+		}
 	}
 
-	return false
+	return float64(retries) / float64(len(ar.toolAttempts))
 }

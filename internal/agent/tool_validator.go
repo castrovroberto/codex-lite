@@ -30,12 +30,12 @@ func (v *ToolValidator) ValidateFilePath(filePath string) error {
 
 	// Check for dangerous path patterns
 	if strings.Contains(filePath, "..") {
-		return NewParameterError("file_path", "cannot contain '..' (path traversal)")
+		return NewPathOutsideWorkspaceError(filePath)
 	}
 
 	// Check for absolute paths
 	if filepath.IsAbs(filePath) {
-		return NewParameterError("file_path", "absolute paths are not allowed, use relative paths within workspace")
+		return NewPathOutsideWorkspaceError(filePath)
 	}
 
 	// Resolve full path
@@ -78,12 +78,12 @@ func (v *ToolValidator) ValidateDirectoryPath(dirPath string) error {
 
 	// Check for dangerous path patterns
 	if strings.Contains(dirPath, "..") {
-		return NewParameterError("directory_path", "cannot contain '..' (path traversal)")
+		return NewPathOutsideWorkspaceError(dirPath)
 	}
 
 	// Check for absolute paths
 	if filepath.IsAbs(dirPath) {
-		return NewParameterError("directory_path", "absolute paths are not allowed, use relative paths within workspace")
+		return NewPathOutsideWorkspaceError(dirPath)
 	}
 
 	// Resolve full path

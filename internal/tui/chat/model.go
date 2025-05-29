@@ -283,29 +283,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle main model logic
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Calculate viewport height using centralized layout dimensions
+		// Calculate viewport height using centralized layout dimensions with dynamic header
 		textareaHeight := m.inputArea.GetHeight()
 		suggestionAreaHeight := m.inputArea.GetSuggestionAreaHeight()
 
-		// Add layout validation and debug logging
-		err := m.layout.ValidateLayout(
+		// Use the new header-aware layout validation
+		err := m.layout.ValidateLayoutWithHeader(
 			msg.Height,
 			textareaHeight,
 			suggestionAreaHeight,
 			m.layout.GetViewportFrameHeight(),
+			m.header,
 		)
 		if err != nil {
 			logger.Get().Warn("Layout validation failed", "error", err)
 		}
 
-		// Add debug layout information
-		m.debugLayoutInfo(msg.Width, msg.Height, textareaHeight, suggestionAreaHeight)
+		// Add debug layout information with dynamic header height
+		m.debugLayoutInfoWithHeader(msg.Width, msg.Height, textareaHeight, suggestionAreaHeight)
 
-		viewportHeight := m.layout.CalculateViewportHeight(
+		viewportHeight := m.layout.CalculateViewportHeightWithHeader(
 			msg.Height,
 			textareaHeight,
 			suggestionAreaHeight,
 			m.layout.GetViewportFrameHeight(),
+			m.header,
 		)
 
 		m.messageList.SetHeight(viewportHeight)
@@ -635,6 +637,21 @@ func (m *Model) debugLayoutInfo(windowWidth, windowHeight, textareaHeight, sugge
 		"suggestionAreaHeight", suggestionAreaHeight,
 		"viewportFrameHeight", m.layout.GetViewportFrameHeight(),
 		"calculatedViewportHeight", m.layout.CalculateViewportHeight(windowHeight, textareaHeight, suggestionAreaHeight, m.layout.GetViewportFrameHeight()),
+		"activeToolCalls", len(m.activeToolCalls),
+	)
+}
+
+// debugLayoutInfoWithHeader logs detailed layout information for troubleshooting with dynamic header height
+func (m *Model) debugLayoutInfoWithHeader(windowWidth, windowHeight, textareaHeight, suggestionAreaHeight int) {
+	logger.Get().Debug("Layout debug info with dynamic header height",
+		"windowWidth", windowWidth,
+		"windowHeight", windowHeight,
+		"headerHeight", m.header.GetHeight(),
+		"statusBarHeight", m.layout.GetStatusBarHeight(),
+		"inputAreaHeight", textareaHeight,
+		"suggestionAreaHeight", suggestionAreaHeight,
+		"viewportFrameHeight", m.layout.GetViewportFrameHeight(),
+		"calculatedViewportHeight", m.layout.CalculateViewportHeightWithHeader(windowHeight, textareaHeight, suggestionAreaHeight, m.layout.GetViewportFrameHeight(), m.header),
 		"activeToolCalls", len(m.activeToolCalls),
 	)
 }

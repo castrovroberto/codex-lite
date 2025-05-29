@@ -1,34 +1,41 @@
+# CGE Configuration File
+# This file configures the Code Generation Engine (CGE)
+
 version = "0.1.0"
 
 [llm]
   provider = "ollama" # "ollama" or "openai"
-  model = "deepseek-coder-v2:16b"
-  ollama_host_url = "http://192.168.0.15:11434"
+  model = "llama3.2:latest"
+  ollama_host_url = "http://localhost:11434"
+  ollama_keep_alive = "5m"
+  max_tokens_per_request = 4096
+  requests_per_minute = 20
   # For OpenAI, set OPENAI_API_KEY environment variable
   # request_timeout_seconds = 300 # Example
 
 [kgm] # Knowledge Graph Memory
-  # enabled = false
-  # address = "http://localhost:7474" # Example Neo4j address
-  # graphiti_api_url = "http://localhost:8000/api" # Example Graphiti API
+  enabled = false
+  address = "http://localhost:7474" # Example Neo4j address
+  graphiti_api_url = "http://localhost:8000/api" # Example Graphiti API
 
 [project]
-  # default_ignore_dirs = [".git", ".idea", "node_modules", "vendor", "target", "dist", "build"]
-  # default_source_extensions = [".go", ".py", ".js", ".ts", ".java", ".md", ".rs", ".cpp", ".c", ".h", ".hpp"]
+  workspace_root = "."
+  default_ignore_dirs = [".git", ".idea", "node_modules", "vendor", "target", "dist", "build", "__pycache__", "*.pyc", "*.DS_Store"]
+  default_source_extensions = [".go", ".py", ".js", ".ts", ".java", ".md", ".rs", ".cpp", ".c", ".h", ".hpp", ".json", ".toml", ".yaml", ".yml"]
 
 [logging]
   level = "info" # "debug", "info", "warn", "error"
-  # log_file = "cge.log"
+  log_file = "cge.log"
 
 [budget]
-  # run_budget_usd = 10.0 # Max USD cost for a run (OpenAI)
+  run_budget_usd = 0.0 # Max USD cost for a run (OpenAI)
   # max_tokens_per_request = 4096
   # max_requests_per_minute = 20
 
 [commands]
   [commands.review]
-    test_command = "go test ./..."
-    lint_command = "golangci-lint run"
+    test_command = ""
+    lint_command = ""
     max_cycles = 3
   
   [commands.automated_workflow]
@@ -49,3 +56,22 @@ version = "0.1.0"
     # Audit settings
     audit_enabled = true
     audit_retention_days = 30 
+
+# Enhanced Tools Configuration
+[tools.list_directory]
+# Allow listing directories outside the workspace root
+allow_outside_workspace = false
+# Additional allowed root directories for listing (when allow_outside_workspace is true)
+allowed_roots = [
+    "~/Documents",  # User documents
+    "~/Downloads",  # User downloads
+    "/tmp"         # Temporary directory
+]
+# Maximum recursion depth limit
+max_depth_limit = 10
+# Maximum number of files to return in one operation
+max_files_limit = 1000
+# Whether to automatically resolve symbolic links
+auto_resolve_symlinks = false
+# Enable smart path resolution for common directory names
+smart_path_resolution = true 

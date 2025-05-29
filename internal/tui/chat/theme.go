@@ -50,8 +50,8 @@ type Theme struct {
 // NewDefaultTheme creates the default theme configuration
 func NewDefaultTheme() *Theme {
 	theme := &Theme{
-		// Layout dimensions
-		HeaderHeight:      2,
+		// Layout dimensions - HeaderHeight can now be dynamic
+		HeaderHeight:      2, // Base height, will be overridden by dynamic calculation
 		StatusBarHeight:   1,
 		MinViewportHeight: 3,
 	}
@@ -67,11 +67,12 @@ func NewDefaultTheme() *Theme {
 	theme.Colors.Muted = lipgloss.Color("241")
 	theme.Colors.Border = lipgloss.Color("63")
 
-	// Component styles
+	// Component styles with enhanced header styling
 	theme.Header = lipgloss.NewStyle().
 		Background(theme.Colors.Primary).
 		Foreground(theme.Colors.Secondary).
-		Padding(0, 1)
+		Padding(0, 1).
+		Bold(false)
 
 	theme.StatusBar = lipgloss.NewStyle().
 		Background(theme.Colors.Surface).
@@ -151,9 +152,18 @@ func NewLayoutDimensions(theme *Theme) *LayoutDimensions {
 	return &LayoutDimensions{theme: theme}
 }
 
-// GetHeaderHeight returns the header height
+// GetHeaderHeight returns the dynamic header height based on the header model
 func (ld *LayoutDimensions) GetHeaderHeight() int {
 	return ld.theme.HeaderHeight
+}
+
+// GetHeaderHeightForModel returns the header height for a specific header model
+func (ld *LayoutDimensions) GetHeaderHeightForModel(headerModel interface{}) int {
+	// Use interface{} to avoid circular imports, check if it has GetHeight method
+	if hm, ok := headerModel.(interface{ GetHeight() int }); ok {
+		return hm.GetHeight()
+	}
+	return ld.GetHeaderHeight()
 }
 
 // GetStatusBarHeight returns the status bar height
@@ -187,11 +197,42 @@ func (ld *LayoutDimensions) CalculateViewportHeight(windowHeight, textareaHeight
 	return availableHeight
 }
 
+// CalculateViewportHeightWithHeader calculates viewport height using a specific header model
+func (ld *LayoutDimensions) CalculateViewportHeightWithHeader(windowHeight, textareaHeight, suggestionAreaHeight, viewportFrameHeight int, headerModel interface{}) int {
+	headerHeight := ld.GetHeaderHeightForModel(headerModel)
+	statusBarHeight := ld.GetStatusBarHeight()
+
+	// Calculate available height for viewport content
+	availableHeight := windowHeight - headerHeight - statusBarHeight - textareaHeight - suggestionAreaHeight - viewportFrameHeight
+
+	// Ensure minimum viewport height
+	if availableHeight < ld.GetMinViewportHeight() {
+		return ld.GetMinViewportHeight()
+	}
+
+	return availableHeight
+}
+
 // ValidateLayout validates that all component heights sum to the window height
 func (ld *LayoutDimensions) ValidateLayout(windowHeight, textareaHeight, suggestionAreaHeight, viewportFrameHeight int) error {
 	totalHeight := ld.GetHeaderHeight() + ld.GetStatusBarHeight() +
 		textareaHeight + suggestionAreaHeight + viewportFrameHeight
 	calculatedViewportHeight := ld.CalculateViewportHeight(windowHeight, textareaHeight, suggestionAreaHeight, viewportFrameHeight)
+
+	actualTotal := totalHeight + calculatedViewportHeight
+	if actualTotal != windowHeight {
+		return fmt.Errorf("layout height mismatch: components sum to %d, but window height is %d (diff: %d)",
+			actualTotal, windowHeight, windowHeight-actualTotal)
+	}
+	return nil
+}
+
+// ValidateLayoutWithHeader validates layout using a specific header model
+func (ld *LayoutDimensions) ValidateLayoutWithHeader(windowHeight, textareaHeight, suggestionAreaHeight, viewportFrameHeight int, headerModel interface{}) error {
+	headerHeight := ld.GetHeaderHeightForModel(headerModel)
+	totalHeight := headerHeight + ld.GetStatusBarHeight() +
+		textareaHeight + suggestionAreaHeight + viewportFrameHeight
+	calculatedViewportHeight := ld.CalculateViewportHeightWithHeader(windowHeight, textareaHeight, suggestionAreaHeight, viewportFrameHeight, headerModel)
 
 	actualTotal := totalHeight + calculatedViewportHeight
 	if actualTotal != windowHeight {

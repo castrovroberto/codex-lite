@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/castrovroberto/CGE/internal/agent"
 	"github.com/castrovroberto/CGE/internal/security"
 	"github.com/spf13/viper"
 )
@@ -57,6 +58,18 @@ type AppConfig struct {
 			MaxCycles   int    `mapstructure:"max_cycles"`
 		} `mapstructure:"review"`
 	} `mapstructure:"commands"`
+
+	// Tools configuration for enhanced tool behavior
+	Tools struct {
+		ListDirectory struct {
+			AllowOutsideWorkspace bool     `mapstructure:"allow_outside_workspace"`
+			AllowedRoots          []string `mapstructure:"allowed_roots"`
+			MaxDepthLimit         int      `mapstructure:"max_depth_limit"`
+			MaxFilesLimit         int      `mapstructure:"max_files_limit"`
+			AutoResolveSymlinks   bool     `mapstructure:"auto_resolve_symlinks"`
+			SmartPathResolution   bool     `mapstructure:"smart_path_resolution"`
+		} `mapstructure:"list_directory"`
+	} `mapstructure:"tools"`
 
 	// Old fields - to be reviewed/migrated or removed
 	ChatSystemPromptFile          string        `mapstructure:"chat_system_prompt_file"`
@@ -126,6 +139,27 @@ func (ac *AppConfig) GetIntegratorConfig() IntegratorConfig {
 	return IntegratorConfig{
 		WorkspaceRoot: ac.Project.WorkspaceRoot,
 		PromptsDir:    filepath.Join(ac.Project.WorkspaceRoot, "prompts"),
+	}
+}
+
+// GetListDirectoryConfig extracts list directory tool configuration
+func (ac *AppConfig) GetListDirectoryConfig() agent.ListDirToolConfig {
+	return agent.ListDirToolConfig{
+		AllowOutsideWorkspace: ac.Tools.ListDirectory.AllowOutsideWorkspace,
+		AllowedRoots:          ac.Tools.ListDirectory.AllowedRoots,
+		MaxDepthLimit:         ac.Tools.ListDirectory.MaxDepthLimit,
+		MaxFilesLimit:         ac.Tools.ListDirectory.MaxFilesLimit,
+		AutoResolveSymlinks:   ac.Tools.ListDirectory.AutoResolveSymlinks,
+		SmartPathResolution:   ac.Tools.ListDirectory.SmartPathResolution,
+	}
+}
+
+// GetToolFactoryConfig extracts complete tool factory configuration
+func (ac *AppConfig) GetToolFactoryConfig() agent.ToolFactoryConfig {
+	listDirConfig := ac.GetListDirectoryConfig()
+	return agent.ToolFactoryConfig{
+		ListDirectory: &listDirConfig,
+		// Future tool configs will be added here
 	}
 }
 
@@ -199,6 +233,14 @@ func LoadConfig(cfgFile string) error {
 		viper.SetDefault("commands.review.test_command", "")
 		viper.SetDefault("commands.review.lint_command", "")
 		viper.SetDefault("commands.review.max_cycles", 3)
+
+		// Tools configuration defaults
+		viper.SetDefault("tools.list_directory.allow_outside_workspace", false)
+		viper.SetDefault("tools.list_directory.allowed_roots", []string{})
+		viper.SetDefault("tools.list_directory.max_depth_limit", 10)
+		viper.SetDefault("tools.list_directory.max_files_limit", 1000)
+		viper.SetDefault("tools.list_directory.auto_resolve_symlinks", false)
+		viper.SetDefault("tools.list_directory.smart_path_resolution", true)
 
 		// Defaults for old fields (to be reviewed)
 		viper.SetDefault("chat_system_prompt_file", "")

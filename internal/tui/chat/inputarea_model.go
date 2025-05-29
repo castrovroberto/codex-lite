@@ -50,15 +50,15 @@ func NewInputAreaModel(theme *Theme, availableCommands []string) *InputAreaModel
 
 // Update handles input area updates
 func (i *InputAreaModel) Update(msg tea.Msg) (*InputAreaModel, tea.Cmd) {
-	var cmd tea.Cmd
+   var cmd tea.Cmd
 
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		i.width = msg.Width
-		i.textarea.SetWidth(msg.Width)
-	}
-
-	// Update textarea
+   // Intercept window resize to adjust width only, avoid passing resize to textarea
+   if wmsg, ok := msg.(tea.WindowSizeMsg); ok {
+       i.width = wmsg.Width
+       i.textarea.SetWidth(wmsg.Width)
+       return i, nil
+   }
+	// Update textarea for other messages
 	i.textarea, cmd = i.textarea.Update(msg)
 
 	// Only update suggestions if the input value actually changed

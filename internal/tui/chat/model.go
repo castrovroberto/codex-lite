@@ -249,6 +249,9 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 	case "openai":
 		openaiConfig := cfg.GetOpenAIConfig()
 		llmClient = llm.NewOpenAIClient(openaiConfig)
+	case "gemini":
+		geminiConfig := cfg.GetGeminiConfig()
+		llmClient = llm.NewGeminiClient(geminiConfig)
 	default:
 		// Fallback to ollama if provider is unknown
 		ollamaConfig := cfg.GetOllamaConfig()
@@ -261,7 +264,7 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 		workspaceRoot = "." // Fallback to current directory
 	}
 
-	// Convert workspace root to absolute path
+	// Convert workspace root to absolute path to fix tool access issues
 	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
 	if err != nil {
 		absWorkspaceRoot = workspaceRoot
@@ -270,9 +273,13 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 	toolFactory := agent.NewToolFactory(absWorkspaceRoot)
 	toolRegistry := toolFactory.CreateGenerationRegistry()
 
-	// Create chat presenter
+	// Create chat presenter with enhanced system prompt that includes context instructions
 	systemPrompt := cfg.GetLoadedChatSystemPrompt()
-	presenter := NewChatPresenter(ctx, llmClient, toolRegistry, systemPrompt, modelName)
+
+	// Enhance system prompt with context awareness instructions
+	enhancedSystemPrompt := systemPrompt + "\n\n" + buildContextAwarenessInstructions(absWorkspaceRoot)
+
+	presenter := NewChatPresenter(ctx, llmClient, toolRegistry, enhancedSystemPrompt, modelName)
 
 	// Create model with options
 	return NewChatModel(
@@ -836,4 +843,36 @@ func (m *Model) StatusBar() *StatusBarModel {
 // Theme returns the theme
 func (m *Model) Theme() *Theme {
 	return m.theme
+}
+
+// buildContextAwarenessInstructions creates enhanced context instructions for the LLM
+func buildContextAwarenessInstructions(workspaceRoot string) string {
+	return fmt.Sprintf(`
+## 🔍 Environment Context Instructions
+
+You are operating in the following environment:
+- **Working Directory**: %s
+- **Context Tools Available**: git_info, list_directory, codebase_search
+
+### Context Gathering Protocol
+Before starting any complex task:
+1. Use git_info to understand the current Git branch and repository status
+2. Use list_directory to explore the project structure and understand the codebase layout
+3. Consider the project type and existing patterns before making recommendations
+
+### Workspace Awareness
+- All file paths should be interpreted relative to the workspace root
+- Check Git status before making changes that might conflict with existing work
+- Understand the project structure before suggesting new files or directories
+- Follow existing code patterns and conventions evident in the codebase
+
+### Enhanced Decision Making
+Factor in:
+- Current Git branch and any uncommitted changes
+- Project structure and organization patterns
+- Existing dependencies and frameworks in use
+- File naming and directory organization conventions
+
+Use the context tools proactively to provide more relevant and contextually-aware assistance.
+`, workspaceRoot)
 }

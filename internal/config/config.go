@@ -26,6 +26,8 @@ type AppConfig struct {
 		OllamaHostURL         string        `mapstructure:"ollama_host_url"`        // Specific to Ollama, might be refactored
 		OllamaKeepAlive       string        `mapstructure:"ollama_keep_alive"`      // Specific to Ollama
 		OpenAIAPIKey          string        `mapstructure:"openai_api_key"`         // Loaded from env typically
+		GeminiAPIKey          string        `mapstructure:"gemini_api_key"`         // Loaded from env typically
+		GeminiTemperature     float64       `mapstructure:"gemini_temperature"`     // Gemini-specific temperature
 		MaxTokensPerRequest   int           `mapstructure:"max_tokens_per_request"` // New
 		RequestsPerMinute     int           `mapstructure:"requests_per_minute"`    // New
 	} `mapstructure:"llm"`
@@ -125,6 +127,15 @@ type OpenAIConfig struct {
 	RequestsPerMinute int           `json:"requests_per_minute"`
 }
 
+// GeminiConfig holds configuration specific to Google Gemini LLM client
+type GeminiConfig struct {
+	APIKey            string        `json:"api_key"`
+	RequestTimeout    time.Duration `json:"request_timeout"`
+	MaxTokens         int           `json:"max_tokens"`
+	RequestsPerMinute int           `json:"requests_per_minute"`
+	Temperature       float64       `json:"temperature"`
+}
+
 // IntegratorConfig holds configuration for command integrator
 type IntegratorConfig struct {
 	WorkspaceRoot string `json:"workspace_root"`
@@ -152,6 +163,17 @@ func (ac *AppConfig) GetOpenAIConfig() OpenAIConfig {
 		RequestTimeout:    ac.LLM.RequestTimeoutSeconds,
 		MaxTokens:         ac.LLM.MaxTokensPerRequest,
 		RequestsPerMinute: ac.LLM.RequestsPerMinute,
+	}
+}
+
+// GetGeminiConfig extracts Gemini-specific configuration
+func (ac *AppConfig) GetGeminiConfig() GeminiConfig {
+	return GeminiConfig{
+		APIKey:            ac.LLM.GeminiAPIKey,
+		RequestTimeout:    ac.LLM.RequestTimeoutSeconds,
+		MaxTokens:         ac.LLM.MaxTokensPerRequest,
+		RequestsPerMinute: ac.LLM.RequestsPerMinute,
+		Temperature:       ac.LLM.GeminiTemperature,
 	}
 }
 
@@ -271,6 +293,7 @@ func LoadConfig(cfgFile string) error {
 		viper.SetDefault("llm.request_timeout_seconds", "300s")
 		viper.SetDefault("llm.ollama_host_url", "http://localhost:11434")
 		viper.SetDefault("llm.ollama_keep_alive", "5m")
+		viper.SetDefault("llm.gemini_temperature", 0.7)      // Default temperature for Gemini
 		viper.SetDefault("llm.max_tokens_per_request", 4096) // Default based on common models
 		viper.SetDefault("llm.requests_per_minute", 20)      // Default sensible RPM
 
@@ -332,6 +355,9 @@ func LoadConfig(cfgFile string) error {
 
 		// Specific binding for OpenAI API Key as it's sensitive
 		_ = viper.BindEnv("llm.openai_api_key", "OPENAI_API_KEY")
+
+		// Specific binding for Gemini API Key as it's sensitive
+		_ = viper.BindEnv("llm.gemini_api_key", "GEMINI_API_KEY")
 
 		// Attempt to read the configuration file.
 		if err := viper.ReadInConfig(); err != nil {

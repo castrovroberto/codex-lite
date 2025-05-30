@@ -8,6 +8,7 @@ import (
 
 	"github.com/castrovroberto/CGE/internal/agent"
 	"github.com/castrovroberto/CGE/internal/config"
+	contextutil "github.com/castrovroberto/CGE/internal/context"
 	"github.com/castrovroberto/CGE/internal/llm"
 	"github.com/castrovroberto/CGE/internal/orchestrator"
 	"github.com/castrovroberto/CGE/internal/tui/chat"
@@ -15,22 +16,37 @@ import (
 
 // Container holds all application dependencies
 type Container struct {
-	config       *config.AppConfig
-	fileSystem   FileSystemService
-	cmdExecutor  CommandExecutor
-	httpClient   HTTPClient
-	sessionStore SessionStore
+	config           *config.AppConfig
+	fileSystem       FileSystemService
+	cmdExecutor      CommandExecutor
+	httpClient       HTTPClient
+	sessionStore     SessionStore
+	absWorkspaceRoot string // Always absolute workspace root
 
 	// Services (built lazily)
-	llmClient    llm.Client
-	toolRegistry *agent.Registry
-	agentRunner  *orchestrator.AgentRunner
+	llmClient         llm.Client
+	toolRegistry      *agent.Registry
+	agentRunner       *orchestrator.AgentRunner
+	contextIntegrator *contextutil.ContextIntegrator
 }
 
 // NewContainer creates a new dependency injection container
 func NewContainer(cfg *config.AppConfig) *Container {
+	// Ensure workspace root is absolute
+	workspaceRoot := cfg.Project.WorkspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = "."
+	}
+
+	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		// Fallback to original if conversion fails
+		absWorkspaceRoot = workspaceRoot
+	}
+
 	return &Container{
-		config: cfg,
+		config:           cfg,
+		absWorkspaceRoot: absWorkspaceRoot,
 		// Use real implementations by default
 		fileSystem:   &RealFileSystemService{},
 		cmdExecutor:  &RealCommandExecutor{},
@@ -61,6 +77,19 @@ func (c *Container) WithHTTPClient(client HTTPClient) *Container {
 func (c *Container) WithSessionStore(store SessionStore) *Container {
 	c.sessionStore = store
 	return c
+}
+
+// GetContextIntegrator returns the configured context integrator
+func (c *Container) GetContextIntegrator() *contextutil.ContextIntegrator {
+	if c.contextIntegrator == nil {
+		c.contextIntegrator = c.buildContextIntegrator()
+	}
+	return c.contextIntegrator
+}
+
+// GetAbsoluteWorkspaceRoot returns the absolute workspace root path
+func (c *Container) GetAbsoluteWorkspaceRoot() string {
+	return c.absWorkspaceRoot
 }
 
 // GetLLMClient returns the configured LLM client
@@ -108,6 +137,27 @@ func (c *Container) GetChatPresenter(ctx context.Context, modelName, systemPromp
 	)
 }
 
+// GetChatPresenterWithContext returns a configured chat presenter with workspace context
+func (c *Container) GetChatPresenterWithContext(ctx context.Context, modelName, systemPrompt string) chat.MessageProvider {
+	// Gather workspace context and prepend to system prompt
+	contextIntegrator := c.GetContextIntegrator()
+	workspaceContext, err := contextIntegrator.GatherWorkspaceContext(ctx)
+
+	enhancedSystemPrompt := systemPrompt
+	if err == nil {
+		contextualInfo := contextIntegrator.FormatContextForPrompt(workspaceContext)
+		enhancedSystemPrompt = contextualInfo + "\n" + systemPrompt
+	}
+
+	return chat.NewChatPresenter(
+		ctx,
+		c.GetLLMClient(),
+		c.GetToolRegistry(),
+		enhancedSystemPrompt,
+		modelName,
+	)
+}
+
 // buildLLMClient creates the appropriate LLM client based on configuration
 func (c *Container) buildLLMClient() llm.Client {
 	switch c.config.LLM.Provider {
@@ -117,6 +167,9 @@ func (c *Container) buildLLMClient() llm.Client {
 	case "openai":
 		config := c.config.GetOpenAIConfig()
 		return llm.NewOpenAIClient(config)
+	case "gemini":
+		config := c.config.GetGeminiConfig()
+		return llm.NewGeminiClient(config)
 	default:
 		// Fallback to ollama
 		config := c.config.GetOllamaConfig()
@@ -126,19 +179,9 @@ func (c *Container) buildLLMClient() llm.Client {
 
 // buildToolRegistry creates a tool registry with dependency injection
 func (c *Container) buildToolRegistry() *agent.Registry {
-	workspaceRoot := c.config.Project.WorkspaceRoot
-	if workspaceRoot == "" {
-		workspaceRoot = "."
-	}
-
-	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
-	if err != nil {
-		absWorkspaceRoot = workspaceRoot
-	}
-
-	// Create enhanced tool factory with dependency injection
+	// Create enhanced tool factory with dependency injection using absolute workspace root
 	enhancedFactory := agent.NewEnhancedToolFactory(
-		absWorkspaceRoot,
+		c.absWorkspaceRoot,
 		c.fileSystem,
 		c.cmdExecutor,
 	)
@@ -156,6 +199,11 @@ func (c *Container) buildAgentRunner(systemPrompt, modelName string) *orchestrat
 		systemPrompt,
 		modelName,
 	)
+}
+
+// buildContextIntegrator creates a context integrator with the tool registry
+func (c *Container) buildContextIntegrator() *contextutil.ContextIntegrator {
+	return contextutil.NewContextIntegrator(c.absWorkspaceRoot, c.GetToolRegistry())
 }
 
 // Config returns the application configuration

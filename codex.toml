@@ -4,14 +4,39 @@
 version = "0.1.0"
 
 [llm]
-  provider = "ollama" # "ollama" or "openai"
+  # LLM Provider Configuration
+  # Supported providers: "ollama", "openai", "gemini"
+  provider = "ollama"
+  
+  # Model Configuration
   model = "llama3.2:latest"
+  
+  # Request timeout in seconds
+  request_timeout_seconds = 300
+  
+  # Maximum tokens per request (applies to all providers)
+  max_tokens_per_request = 4096
+  
+  # Rate limiting: requests per minute
+  requests_per_minute = 20
+  
+  # Ollama-specific settings
   ollama_host_url = "http://localhost:11434"
   ollama_keep_alive = "5m"
-  max_tokens_per_request = 4096
-  requests_per_minute = 20
-  # For OpenAI, set OPENAI_API_KEY environment variable
-  # request_timeout_seconds = 300 # Example
+  
+  # OpenAI-specific settings
+  # Set OPENAI_API_KEY environment variable
+  # openai_api_key = ""  # Can be set via environment variable
+  # openai_base_url = "https://api.openai.com/v1"  # Optional: for custom endpoints
+  
+  # Gemini-specific settings
+  # Set GEMINI_API_KEY environment variable
+  # gemini_api_key = ""  # Can be set via environment variable
+  gemini_temperature = 0.7  # Temperature for Gemini (0.0 to 1.0)
+  
+  # Example configurations for different providers:
+  # For OpenAI: provider = "openai", model = "gpt-4" or "gpt-3.5-turbo"
+  # For Gemini: provider = "gemini", model = "gemini-1.5-pro" or "gemini-1.5-flash"
 
 [kgm] # Knowledge Graph Memory
   enabled = false
@@ -19,13 +44,34 @@ version = "0.1.0"
   graphiti_api_url = "http://localhost:8000/api" # Example Graphiti API
 
 [project]
+  # Project workspace root directory
   workspace_root = "."
+  
+  # Project metadata
+  name = "CGE Project"
+  description = "Code Generation Engine project"
+  
+  # Context integration settings
+  enable_context_integration = true
+  auto_gather_context = true
+  context_cache_duration = "5m"
   default_ignore_dirs = [".git", ".idea", "node_modules", "vendor", "target", "dist", "build", "__pycache__", "*.pyc", "*.DS_Store"]
   default_source_extensions = [".go", ".py", ".js", ".ts", ".java", ".md", ".rs", ".cpp", ".c", ".h", ".hpp", ".json", ".toml", ".yaml", ".yml"]
 
 [logging]
-  level = "info" # "debug", "info", "warn", "error"
-  log_file = "cge.log"
+  # Logging configuration
+  level = "info"  # debug, info, warn, error
+  output = "file"  # console, file, both
+  log_directory = ".cge/logs"
+  max_log_size = "10MB"
+  max_log_files = 5
+  
+  # Component-specific logging
+  [logging.components]
+    llm = "info"
+    tools = "info"
+    context = "debug"
+    ui = "warn"
 
 [budget]
   run_budget_usd = 0.0 # Max USD cost for a run (OpenAI)
@@ -33,45 +79,133 @@ version = "0.1.0"
   # max_requests_per_minute = 20
 
 [commands]
-  [commands.review]
-    test_command = ""
-    lint_command = ""
-    max_cycles = 3
+  # Command-specific configurations
   
-  [commands.automated_workflow]
-    # Auto-commit settings
-    auto_commit_enabled = false
-    auto_commit_message_template = "chore: automated changes from CGE"
-    auto_commit_on_success = false
+  [commands.plan]
+    # Planning command settings
+    max_iterations = 5
+    include_context = true
+    output_format = "json"
     
-    # Commit message conventions
-    use_conventional_commits = true
-    default_commit_type = "feat"
+  [commands.generate]
+    # Code generation settings
+    backup_files = true
+    validate_syntax = true
+    run_tests_after = false
     
-    # Rollback settings
-    create_backups = true
-    backup_retention_days = 7
-    auto_rollback_on_failure = true
-    
-    # Audit settings
-    audit_enabled = true
-    audit_retention_days = 30 
+  [commands.review]
+    # Code review settings
+    test_command = "go test ./..."
+    lint_command = "golangci-lint run"
+    max_cycles = 3
+    auto_fix = false
 
-# Enhanced Tools Configuration
-[tools.list_directory]
-# Allow listing directories outside the workspace root
-allow_outside_workspace = false
-# Additional allowed root directories for listing (when allow_outside_workspace is true)
-allowed_roots = [
-    "~/Documents",  # User documents
-    "~/Downloads",  # User downloads
-    "/tmp"         # Temporary directory
-]
-# Maximum recursion depth limit
-max_depth_limit = 10
-# Maximum number of files to return in one operation
-max_files_limit = 1000
-# Whether to automatically resolve symbolic links
-auto_resolve_symlinks = false
-# Enable smart path resolution for common directory names
-smart_path_resolution = true 
+[tools]
+  # Tool-specific configurations
+  
+  [tools.list_directory]
+    # Directory listing tool settings
+    allow_outside_workspace = false
+    max_depth_limit = 10
+    max_files_limit = 1000
+    auto_resolve_symlinks = false
+    smart_path_resolution = true
+    
+    # Additional allowed root directories (when allow_outside_workspace is true)
+    allowed_roots = [
+        "~/Documents",
+        "~/Downloads",
+        "/tmp"
+    ]
+    
+  [tools.git_info]
+    # Git information tool settings
+    include_commits_by_default = true
+    default_commit_count = 5
+    include_status_details = true
+    
+  [tools.codebase_search]
+    # Codebase search tool settings
+    max_results = 50
+    include_line_numbers = true
+    case_sensitive = false
+    
+  [tools.file_operations]
+    # File operation tool settings
+    create_backups = true
+    backup_directory = ".cge/backups"
+    validate_paths = true
+    
+  [tools.shell_commands]
+    # Shell command execution settings
+    timeout_seconds = 300
+    allowed_commands = [
+        "go",
+        "npm",
+        "yarn",
+        "make",
+        "git",
+        "docker"
+    ]
+    restricted_commands = [
+        "rm -rf",
+        "sudo",
+        "chmod 777"
+    ]
+
+[security]
+  # Security settings
+  validate_file_paths = true
+  restrict_outside_workspace = true
+  audit_tool_calls = true
+  audit_log_directory = ".cge/audit"
+  
+  # Sensitive data handling
+  mask_api_keys = true
+  log_level = "info"  # debug, info, warn, error
+
+[ui]
+  # User interface settings
+  
+  [ui.chat]
+    # Chat TUI settings
+    theme = "default"
+    enable_syntax_highlighting = true
+    show_timestamps = true
+    auto_scroll = true
+    max_history_size = 1000
+    
+  [ui.progress]
+    # Progress display settings
+    show_progress_bars = true
+    update_interval = "100ms"
+    detailed_status = true
+
+[session]
+  # Session management settings
+  enable_session_persistence = true
+  session_directory = ".cge/sessions"
+  auto_save_interval = "30s"
+  max_session_age = "7d"
+  cleanup_old_sessions = true
+
+[performance]
+  # Performance tuning
+  concurrent_tool_calls = 3
+  cache_tool_results = true
+  cache_duration = "10m"
+  
+  # Memory management
+  max_memory_usage = "1GB"
+  gc_interval = "5m"
+
+[experimental]
+  # Experimental features (use with caution)
+  enable_ai_planning = true
+  enable_context_prediction = false
+  enable_smart_suggestions = true
+  
+  # Advanced context features
+  deep_context_analysis = false
+  cross_file_analysis = true
+  dependency_tracking = true 

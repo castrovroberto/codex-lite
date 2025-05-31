@@ -10,29 +10,236 @@ import (
 	"sync"
 	"time"
 
+	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/security"
 	"github.com/spf13/viper"
 )
 
 // AppConfig holds the application's global configuration.
 type AppConfig struct {
-	DefaultModel                  string        `mapstructure:"default_model"`
-	LogLevel                      string        `mapstructure:"log_level"`
-	OllamaHostURL                 string        `mapstructure:"ollama_host_url"`
-	OllamaRequestTimeout          time.Duration `mapstructure:"ollama_request_timeout"`
-	OllamaKeepAlive               string        `mapstructure:"ollama_keep_alive"`
-	ChatSystemPromptFile          string        `mapstructure:"chat_system_prompt_file"` // New: Path to the system prompt file for chat
-	MaxAgentConcurrency           int           `mapstructure:"max_agent_concurrency"`
-	AgentTimeout                  time.Duration `mapstructure:"agent_timeout"` // New: Timeout for individual agent execution
-	WorkspaceRoot                 string        `mapstructure:"workspace_root"`
-	loadedChatSystemPromptContent string        // Unexported field to store the loaded content
+	Version string `mapstructure:"version"` // Version of the codex.toml configuration
 
-	// Add other global settings here
+	LLM struct {
+		Provider              string        `mapstructure:"provider"`
+		Model                 string        `mapstructure:"model"`
+		RequestTimeoutSeconds time.Duration `mapstructure:"request_timeout_seconds"`
+		OllamaHostURL         string        `mapstructure:"ollama_host_url"`        // Specific to Ollama, might be refactored
+		OllamaKeepAlive       string        `mapstructure:"ollama_keep_alive"`      // Specific to Ollama
+		OpenAIAPIKey          string        `mapstructure:"openai_api_key"`         // Loaded from env typically
+		GeminiAPIKey          string        `mapstructure:"gemini_api_key"`         // Loaded from env typically
+		GeminiTemperature     float64       `mapstructure:"gemini_temperature"`     // Gemini-specific temperature
+		MaxTokensPerRequest   int           `mapstructure:"max_tokens_per_request"` // New
+		RequestsPerMinute     int           `mapstructure:"requests_per_minute"`    // New
+	} `mapstructure:"llm"`
+
+	KGM struct {
+		Enabled        bool   `mapstructure:"enabled"`
+		Address        string `mapstructure:"address"`
+		GraphitiAPIURL string `mapstructure:"graphiti_api_url"`
+	} `mapstructure:"kgm"`
+
+	Project struct {
+		DefaultIgnoreDirs       []string `mapstructure:"default_ignore_dirs"`
+		DefaultSourceExtensions []string `mapstructure:"default_source_extensions"`
+		WorkspaceRoot           string   `mapstructure:"workspace_root"`
+	} `mapstructure:"project"`
+
+	Logging struct {
+		Level   string `mapstructure:"level"`
+		LogFile string `mapstructure:"log_file"`
+	} `mapstructure:"logging"`
+
+	Budget struct {
+		RunBudgetUSD float64 `mapstructure:"run_budget_usd"` // New
+	} `mapstructure:"budget"`
+
+	Commands struct {
+		Review struct {
+			TestCommand string `mapstructure:"test_command"`
+			LintCommand string `mapstructure:"lint_command"`
+			MaxCycles   int    `mapstructure:"max_cycles"`
+		} `mapstructure:"review"`
+	} `mapstructure:"commands"`
+
+	// Tools configuration for enhanced tool behavior
+	Tools struct {
+		ListDirectory struct {
+			AllowOutsideWorkspace bool     `mapstructure:"allow_outside_workspace"`
+			AllowedRoots          []string `mapstructure:"allowed_roots"`
+			MaxDepthLimit         int      `mapstructure:"max_depth_limit"`
+			MaxFilesLimit         int      `mapstructure:"max_files_limit"`
+			AutoResolveSymlinks   bool     `mapstructure:"auto_resolve_symlinks"`
+			SmartPathResolution   bool     `mapstructure:"smart_path_resolution"`
+		} `mapstructure:"list_directory"`
+	} `mapstructure:"tools"`
+
+	// Deliberation configuration for advanced reasoning
+	Deliberation struct {
+		Enabled             bool    `mapstructure:"enabled"`
+		ConfidenceThreshold float64 `mapstructure:"confidence_threshold"` // 0.7 default
+		MaxThoughtDepth     int     `mapstructure:"max_thought_depth"`    // 3 default
+		RequireExplanation  bool    `mapstructure:"require_explanation"`  // true default
+		ThoughtTimeout      int     `mapstructure:"thought_timeout"`      // seconds, 30 default
+		EnableReflection    bool    `mapstructure:"enable_reflection"`    // false default
+		Templates           struct {
+			Planning   string `mapstructure:"planning"`   // Path to planning thought template
+			Execution  string `mapstructure:"execution"`  // Path to execution thought template
+			Reflection string `mapstructure:"reflection"` // Path to reflection template
+			Confidence string `mapstructure:"confidence"` // Path to confidence assessment template
+		} `mapstructure:"templates"`
+		SafetyChecks struct {
+			VerifyHighRiskActions bool     `mapstructure:"verify_high_risk_actions"` // true default
+			RequireConfirmation   bool     `mapstructure:"require_confirmation"`     // false default
+			HighRiskPatterns      []string `mapstructure:"high_risk_patterns"`       // Patterns to flag
+		} `mapstructure:"safety_checks"`
+	} `mapstructure:"deliberation"`
+
+	// Old fields - to be reviewed/migrated or removed
+	ChatSystemPromptFile          string        `mapstructure:"chat_system_prompt_file"`
+	MaxAgentConcurrency           int           `mapstructure:"max_agent_concurrency"`
+	AgentTimeout                  time.Duration `mapstructure:"agent_timeout"`
+	loadedChatSystemPromptContent string        // Unexported field to store the loaded content
 }
 
 // GetLoadedChatSystemPrompt returns the content of the system prompt file after it has been loaded.
 // It provides safe access to the unexported loadedChatSystemPromptContent field.
 func (ac *AppConfig) GetLoadedChatSystemPrompt() string {
 	return ac.loadedChatSystemPromptContent
+}
+
+// Configuration sub-structs for dependency injection
+
+// OllamaConfig holds configuration specific to Ollama LLM client
+type OllamaConfig struct {
+	HostURL           string        `json:"host_url"`
+	KeepAlive         string        `json:"keep_alive"`
+	RequestTimeout    time.Duration `json:"request_timeout"`
+	MaxTokens         int           `json:"max_tokens"`
+	RequestsPerMinute int           `json:"requests_per_minute"`
+}
+
+// OpenAIConfig holds configuration specific to OpenAI LLM client
+type OpenAIConfig struct {
+	APIKey            string        `json:"api_key"`
+	BaseURL           string        `json:"base_url"`
+	RequestTimeout    time.Duration `json:"request_timeout"`
+	MaxTokens         int           `json:"max_tokens"`
+	RequestsPerMinute int           `json:"requests_per_minute"`
+}
+
+// GeminiConfig holds configuration specific to Google Gemini LLM client
+type GeminiConfig struct {
+	APIKey            string        `json:"api_key"`
+	RequestTimeout    time.Duration `json:"request_timeout"`
+	MaxTokens         int           `json:"max_tokens"`
+	RequestsPerMinute int           `json:"requests_per_minute"`
+	Temperature       float64       `json:"temperature"`
+}
+
+// IntegratorConfig holds configuration for command integrator
+type IntegratorConfig struct {
+	WorkspaceRoot string `json:"workspace_root"`
+	PromptsDir    string `json:"prompts_dir"`
+}
+
+// Convenience methods to extract sub-configs from AppConfig
+
+// GetOllamaConfig extracts Ollama-specific configuration
+func (ac *AppConfig) GetOllamaConfig() OllamaConfig {
+	return OllamaConfig{
+		HostURL:           ac.LLM.OllamaHostURL,
+		KeepAlive:         ac.LLM.OllamaKeepAlive,
+		RequestTimeout:    ac.LLM.RequestTimeoutSeconds,
+		MaxTokens:         ac.LLM.MaxTokensPerRequest,
+		RequestsPerMinute: ac.LLM.RequestsPerMinute,
+	}
+}
+
+// GetOpenAIConfig extracts OpenAI-specific configuration
+func (ac *AppConfig) GetOpenAIConfig() OpenAIConfig {
+	return OpenAIConfig{
+		APIKey:            ac.LLM.OpenAIAPIKey,
+		BaseURL:           "https://api.openai.com/v1", // Default, could be configurable
+		RequestTimeout:    ac.LLM.RequestTimeoutSeconds,
+		MaxTokens:         ac.LLM.MaxTokensPerRequest,
+		RequestsPerMinute: ac.LLM.RequestsPerMinute,
+	}
+}
+
+// GetGeminiConfig extracts Gemini-specific configuration
+func (ac *AppConfig) GetGeminiConfig() GeminiConfig {
+	return GeminiConfig{
+		APIKey:            ac.LLM.GeminiAPIKey,
+		RequestTimeout:    ac.LLM.RequestTimeoutSeconds,
+		MaxTokens:         ac.LLM.MaxTokensPerRequest,
+		RequestsPerMinute: ac.LLM.RequestsPerMinute,
+		Temperature:       ac.LLM.GeminiTemperature,
+	}
+}
+
+// GetIntegratorConfig extracts command integrator configuration
+func (ac *AppConfig) GetIntegratorConfig() IntegratorConfig {
+	return IntegratorConfig{
+		WorkspaceRoot: ac.Project.WorkspaceRoot,
+		PromptsDir:    filepath.Join(ac.Project.WorkspaceRoot, "prompts"),
+	}
+}
+
+// GetListDirectoryConfig extracts list directory tool configuration
+func (ac *AppConfig) GetListDirectoryConfig() agent.ListDirToolConfig {
+	return agent.ListDirToolConfig{
+		AllowOutsideWorkspace: ac.Tools.ListDirectory.AllowOutsideWorkspace,
+		AllowedRoots:          ac.Tools.ListDirectory.AllowedRoots,
+		MaxDepthLimit:         ac.Tools.ListDirectory.MaxDepthLimit,
+		MaxFilesLimit:         ac.Tools.ListDirectory.MaxFilesLimit,
+		AutoResolveSymlinks:   ac.Tools.ListDirectory.AutoResolveSymlinks,
+		SmartPathResolution:   ac.Tools.ListDirectory.SmartPathResolution,
+	}
+}
+
+// GetToolFactoryConfig extracts complete tool factory configuration
+func (ac *AppConfig) GetToolFactoryConfig() agent.ToolFactoryConfig {
+	listDirConfig := ac.GetListDirectoryConfig()
+	return agent.ToolFactoryConfig{
+		ListDirectory: &listDirConfig,
+		// Future tool configs will be added here
+	}
+}
+
+// DeliberationConfig holds deliberation-specific configuration
+type DeliberationConfig struct {
+	Enabled             bool     `json:"enabled"`
+	ConfidenceThreshold float64  `json:"confidence_threshold"`
+	MaxThoughtDepth     int      `json:"max_thought_depth"`
+	RequireExplanation  bool     `json:"require_explanation"`
+	ThoughtTimeout      int      `json:"thought_timeout"`
+	EnableReflection    bool     `json:"enable_reflection"`
+	PlanningTemplate    string   `json:"planning_template"`
+	ExecutionTemplate   string   `json:"execution_template"`
+	ReflectionTemplate  string   `json:"reflection_template"`
+	ConfidenceTemplate  string   `json:"confidence_template"`
+	VerifyHighRisk      bool     `json:"verify_high_risk"`
+	RequireConfirmation bool     `json:"require_confirmation"`
+	HighRiskPatterns    []string `json:"high_risk_patterns"`
+}
+
+// GetDeliberationConfig extracts deliberation configuration
+func (ac *AppConfig) GetDeliberationConfig() DeliberationConfig {
+	return DeliberationConfig{
+		Enabled:             ac.Deliberation.Enabled,
+		ConfidenceThreshold: ac.Deliberation.ConfidenceThreshold,
+		MaxThoughtDepth:     ac.Deliberation.MaxThoughtDepth,
+		RequireExplanation:  ac.Deliberation.RequireExplanation,
+		ThoughtTimeout:      ac.Deliberation.ThoughtTimeout,
+		EnableReflection:    ac.Deliberation.EnableReflection,
+		PlanningTemplate:    ac.Deliberation.Templates.Planning,
+		ExecutionTemplate:   ac.Deliberation.Templates.Execution,
+		ReflectionTemplate:  ac.Deliberation.Templates.Reflection,
+		ConfidenceTemplate:  ac.Deliberation.Templates.Confidence,
+		VerifyHighRisk:      ac.Deliberation.SafetyChecks.VerifyHighRiskActions,
+		RequireConfirmation: ac.Deliberation.SafetyChecks.RequireConfirmation,
+		HighRiskPatterns:    ac.Deliberation.SafetyChecks.HighRiskPatterns,
+	}
 }
 
 // Sentinel errors for configuration loading.
@@ -78,48 +285,79 @@ func resolvePath(path string, configFilePath string) (string, error) {
 func LoadConfig(cfgFile string) error {
 	var loadErr error
 	once.Do(func() {
-		// Set default values
-		viper.SetDefault("default_model", "llama3:latest") // A sensible default
-		viper.SetDefault("log_level", "info")
-		viper.SetDefault("ollama_host_url", "http://localhost:11434") // Default Ollama URL
-		viper.SetDefault("ollama_request_timeout", "120s")            // Default timeout for Ollama requests
-		viper.SetDefault("ollama_keep_alive", "5m")                   // Default keep_alive for Ollama models
-		viper.SetDefault("chat_system_prompt_file", "")               // Default to empty, meaning no external file unless specified
-		viper.SetDefault("max_agent_concurrency", 1)                  // Default to 1 for sequential execution as per backlog task for new orchestrator logic
-		viper.SetDefault("agent_timeout", "30s")                      // Default per-agent timeout
-		viper.SetDefault("workspace_root", ".")                       // Default to current directory
+		// Set default values for CGE
+		viper.SetDefault("version", "0.1.0")
+
+		viper.SetDefault("llm.provider", "ollama")
+		viper.SetDefault("llm.model", "llama3:latest")
+		viper.SetDefault("llm.request_timeout_seconds", "300s")
+		viper.SetDefault("llm.ollama_host_url", "http://localhost:11434")
+		viper.SetDefault("llm.ollama_keep_alive", "5m")
+		viper.SetDefault("llm.gemini_temperature", 0.7)      // Default temperature for Gemini
+		viper.SetDefault("llm.max_tokens_per_request", 4096) // Default based on common models
+		viper.SetDefault("llm.requests_per_minute", 20)      // Default sensible RPM
+
+		viper.SetDefault("kgm.enabled", false)
+		viper.SetDefault("kgm.address", "http://localhost:7474") // Example Neo4j
+		viper.SetDefault("kgm.graphiti_api_url", "http://localhost:8000/api")
+
+		viper.SetDefault("project.workspace_root", ".")
+		viper.SetDefault("project.default_ignore_dirs", []string{".git", ".idea", "node_modules", "vendor", "target", "dist", "build", "__pycache__", "*.pyc", "*.DS_Store"})
+		viper.SetDefault("project.default_source_extensions", []string{".go", ".py", ".js", ".ts", ".java", ".md", ".rs", ".cpp", ".c", ".h", ".hpp", ".json", ".toml", ".yaml", ".yml"})
+
+		viper.SetDefault("logging.level", "info")
+		viper.SetDefault("logging.log_file", "cge.log") // Default log file
+
+		viper.SetDefault("budget.run_budget_usd", 0.0) // No budget by default
+
+		viper.SetDefault("commands.review.test_command", "")
+		viper.SetDefault("commands.review.lint_command", "")
+		viper.SetDefault("commands.review.max_cycles", 3)
+
+		// Tools configuration defaults
+		viper.SetDefault("tools.list_directory.allow_outside_workspace", false)
+		viper.SetDefault("tools.list_directory.allowed_roots", []string{})
+		viper.SetDefault("tools.list_directory.max_depth_limit", 10)
+		viper.SetDefault("tools.list_directory.max_files_limit", 1000)
+		viper.SetDefault("tools.list_directory.auto_resolve_symlinks", false)
+		viper.SetDefault("tools.list_directory.smart_path_resolution", true)
+
+		// Defaults for old fields (to be reviewed)
+		viper.SetDefault("chat_system_prompt_file", "")
+		viper.SetDefault("max_agent_concurrency", 1)
+		viper.SetDefault("agent_timeout", "60s") // Increased default
 
 		if cfgFile != "" {
 			// Use config file from the flag.
 			viper.SetConfigFile(cfgFile)
+			viper.SetConfigType("toml") // Explicitly set TOML type
 		} else {
 			// Search for config file in home directory and current directory.
 			home, err := os.UserHomeDir()
 			if err == nil {
-				viper.AddConfigPath(filepath.Join(home, ".codex-lite")) // ~/.codex-lite/config.yaml
-				viper.AddConfigPath(home)                               // ~/.codex-lite.yaml
+				viper.AddConfigPath(filepath.Join(home, ".cge")) // ~/.cge/codex.toml
+				viper.AddConfigPath(home)                        // ~/.codex.toml
 			}
-			viper.AddConfigPath(".")           // ./config.yaml or ./.codex-lite.yaml
-			viper.AddConfigPath(".codex-lite") // ./.codex-lite/config.yaml
+			viper.AddConfigPath(".") // ./codex.toml
 
-			// Try both config names
-			viper.SetConfigName(".codex-lite")
-			if err := viper.ReadInConfig(); err != nil {
-				// If .codex-lite.yaml is not found, try config.yaml
-				viper.SetConfigName("config")
-			}
+			viper.SetConfigName("codex") // Name of config file (without extension)
+			viper.SetConfigType("toml")  // Expect TOML
 		}
 
-		viper.AutomaticEnv() // Read in environment variables that match
-		viper.SetEnvPrefix("CODEXLITE")
-		_ = viper.BindEnv("default_model", "CODEXLITE_DEFAULT_MODEL")
-		_ = viper.BindEnv("log_level", "CODEXLITE_LOG_LEVEL")
-		_ = viper.BindEnv("ollama_host_url", "CODEXLITE_OLLAMA_HOST_URL")
-		_ = viper.BindEnv("ollama_request_timeout", "CODEXLITE_OLLAMA_REQUEST_TIMEOUT")
-		_ = viper.BindEnv("ollama_keep_alive", "CODEXLITE_OLLAMA_KEEP_ALIVE")
-		_ = viper.BindEnv("chat_system_prompt_file", "CODEXLITE_CHAT_SYSTEM_PROMPT_FILE") // Env var for the file path
-		_ = viper.BindEnv("max_agent_concurrency", "CODEXLITE_MAX_AGENT_CONCURRENCY")     // Bind new env var
-		_ = viper.BindEnv("agent_timeout", "CODEXLITE_AGENT_TIMEOUT")                     // Bind new env var
+		viper.AutomaticEnv()                                   // Read in environment variables that match
+		viper.SetEnvPrefix("CGE")                              // New prefix for CGE
+		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_")) // Replace . with _ for nested keys
+
+		// Bind environment variables for new CGE structure
+		// Example: CGE_LLM_PROVIDER, CGE_KGM_ENABLED
+		// Viper will automatically bind mapstructure tags if env vars match uppercased key + prefix
+		// e.g., CGE_LLM_PROVIDER for AppConfig.LLM.Provider
+
+		// Specific binding for OpenAI API Key as it's sensitive
+		_ = viper.BindEnv("llm.openai_api_key", "OPENAI_API_KEY")
+
+		// Specific binding for Gemini API Key as it's sensitive
+		_ = viper.BindEnv("llm.gemini_api_key", "GEMINI_API_KEY")
 
 		// Attempt to read the configuration file.
 		if err := viper.ReadInConfig(); err != nil {
@@ -131,14 +369,17 @@ func LoadConfig(cfgFile string) error {
 					return
 				}
 				// If no specific cfgFile, it's okay if default files aren't found; defaults will be used.
+				log.Println("No configuration file found. Using default values and environment variables.")
 			} else if os.IsPermission(err) {
 				loadErr = fmt.Errorf("%w: %v", ErrConfigReadPermission, err)
 				return
 			} else {
-				// For other types of read errors
-				loadErr = fmt.Errorf("%w: %v", ErrConfigRead, err)
+				// For other types of read errors (e.g., parsing error)
+				loadErr = fmt.Errorf("error reading config file '%s': %w", viper.ConfigFileUsed(), err)
 				return
 			}
+		} else {
+			log.Printf("Using configuration file: %s", viper.ConfigFileUsed())
 		}
 
 		// Unmarshal the config into the Cfg struct.
@@ -156,7 +397,17 @@ func LoadConfig(cfgFile string) error {
 				// Potentially use Cfg.ChatSystemPromptFile as is, or handle error
 				Cfg.loadedChatSystemPromptContent = defaultInternalSystemPrompt
 			} else {
-				content, err := os.ReadFile(absPath)
+				// Get directory containing the config file as allowed root
+				configDir := filepath.Dir(viper.ConfigFileUsed())
+				if configDir == "" {
+					// If no config file was used, use current directory
+					configDir, _ = os.Getwd()
+				}
+
+				// Create safe file operations with config directory as allowed root
+				safeOps := security.NewSafeFileOps(configDir)
+
+				content, err := safeOps.SafeReadFile(absPath)
 				if err != nil {
 					log.Printf("Warning: could not read chat_system_prompt_file '%s': %v. Using default prompt.", absPath, err)
 					Cfg.loadedChatSystemPromptContent = defaultInternalSystemPrompt // Use default
@@ -172,8 +423,8 @@ func LoadConfig(cfgFile string) error {
 
 		// Validate AgentTimeout
 		if Cfg.AgentTimeout <= 0 {
-			log.Printf("Warning: agent_timeout must be positive, setting to default (30s)")
-			Cfg.AgentTimeout = 30 * time.Second
+			log.Printf("Warning: agent_timeout must be positive, setting to default (60s)")
+			Cfg.AgentTimeout = 60 * time.Second
 		}
 
 		if Cfg.MaxAgentConcurrency < 1 {
@@ -184,9 +435,15 @@ func LoadConfig(cfgFile string) error {
 			Cfg.MaxAgentConcurrency = 20
 		}
 
-		if Cfg.LogLevel != "" && !isValidLogLevel(Cfg.LogLevel) {
-			log.Printf("Warning: invalid log_level '%s', setting to default (info)", Cfg.LogLevel)
-			Cfg.LogLevel = "info"
+		if Cfg.Logging.Level != "" && !isValidLogLevel(Cfg.Logging.Level) {
+			log.Printf("Warning: invalid log_level '%s', setting to default (info)", Cfg.Logging.Level)
+			Cfg.Logging.Level = "info"
+		}
+
+		// Validate LLM request timeout
+		if Cfg.LLM.RequestTimeoutSeconds <= 0 {
+			log.Printf("Warning: llm.request_timeout_seconds must be positive, setting to default (300s)")
+			Cfg.LLM.RequestTimeoutSeconds = 300 * time.Second
 		}
 	})
 	return loadErr
@@ -210,7 +467,7 @@ type ViperConfigFileNotFoundError = viper.ConfigFileNotFoundError
 // GetConfig returns the loaded application configuration.
 // It ensures that LoadConfig has been called.
 func GetConfig() AppConfig {
-	if Cfg.OllamaHostURL == "" { // A simple check to see if config is initialized.
+	if Cfg.LLM.OllamaHostURL == "" { // A simple check to see if config is initialized.
 		// This might happen if GetConfig is called before LoadConfig (e.g. in tests or if LoadConfig fails silently)
 		// For robustness, ensure LoadConfig is called if Cfg seems uninitialized,
 		// though ideally LoadConfig is called once at startup.

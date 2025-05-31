@@ -3,28 +3,22 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	// Bubbles components for TUI
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 
-	"github.com/alecthomas/chroma"
-	"github.com/alecthomas/chroma/formatters"
-	"github.com/alecthomas/chroma/lexers"
-	"github.com/alecthomas/chroma/styles"
-	"github.com/castrovroberto/codex-lite/internal/agent"
-	"github.com/castrovroberto/codex-lite/internal/config" // Ensure this path and package are correct
-	"github.com/castrovroberto/codex-lite/internal/contextkeys"
-	"github.com/castrovroberto/codex-lite/internal/logger" // Import logger to get the global logger
-	"github.com/castrovroberto/codex-lite/internal/ollama"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/castrovroberto/CGE/internal/agent"
+	"github.com/castrovroberto/CGE/internal/config" // Ensure this path and package are correct
+	"github.com/castrovroberto/CGE/internal/llm"
+
+	// Import the new llm package
+
+	"github.com/castrovroberto/CGE/internal/logger" // Import logger to get the global logger
 )
 
 type (
@@ -41,6 +35,85 @@ type (
 // Add a new message type for main context cancellation
 type mainContextCancelledMsg struct{}
 
+// Progress tracking message types
+type toolProgressMsg struct {
+	toolCallID string
+	toolName   string
+	progress   float64 // 0.0 to 1.0
+	status     string  // Current status description
+	step       int     // Current step number
+	totalSteps int     // Total number of steps
+}
+
+type toolStartMsg struct {
+	toolCallID string
+	toolName   string
+	params     map[string]interface{}
+}
+
+type toolCompleteMsg struct {
+	toolCallID string
+	toolName   string
+	success    bool
+	result     string
+	duration   time.Duration
+	error      string
+}
+
+// toolProgressState tracks the progress of an active tool call
+type toolProgressState struct {
+	toolName     string
+	startTime    time.Time
+	progress     float64
+	status       string
+	step         int
+	totalSteps   int
+	messageIndex int // Index in messages array for updating
+}
+
+// ProgressRenderer handles rendering of progress bars and status
+type ProgressRenderer struct {
+	width int
+}
+
+// NewProgressRenderer creates a new progress renderer
+func NewProgressRenderer(width int) *ProgressRenderer {
+	return &ProgressRenderer{width: width}
+}
+
+// RenderProgress renders a progress bar with status
+func (pr *ProgressRenderer) RenderProgress(state *toolProgressState) string {
+	if state == nil {
+		return ""
+	}
+
+	// Progress bar
+	barWidth := pr.width - 20 // Leave space for text
+	if barWidth < 10 {
+		barWidth = 10
+	}
+
+	filled := int(state.progress * float64(barWidth))
+	if filled > barWidth {
+		filled = barWidth
+	}
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+
+	// Status text
+	elapsed := time.Since(state.startTime)
+	statusText := fmt.Sprintf("🔄 %s", state.toolName)
+
+	if state.totalSteps > 0 {
+		statusText += fmt.Sprintf(" (%d/%d)", state.step, state.totalSteps)
+	}
+
+	statusText += fmt.Sprintf(" %.1f%% - %s", state.progress*100, state.status)
+	statusText += fmt.Sprintf(" (%.1fs)", elapsed.Seconds())
+
+	return fmt.Sprintf("%s\n[%s]", statusText, bar)
+}
+
 // chatMessage holds a single chat entry for re-rendering
 type chatMessage struct {
 	text         string
@@ -51,61 +124,51 @@ type chatMessage struct {
 	sender       string
 	placeholder  bool
 	ThinkingTime time.Duration // New field for LLM thinking time
+
+	// Enhanced tool call support
+	isToolCall   bool                   // New: indicates this is a tool call message
+	isToolResult bool                   // New: indicates this is a tool result message
+	toolName     string                 // New: name of the tool being called/result from
+	toolCallID   string                 // New: unique ID for tool call correlation
+	toolSuccess  bool                   // New: whether tool execution was successful
+	toolDuration time.Duration          // New: how long the tool took to execute
+	toolParams   map[string]interface{} // New: tool parameters for display
+}
+
+// Add near the top after other type definitions
+type chatMsgWrapper struct {
+	ChatMessage
 }
 
 // Model defines the state of the chat TUI
 type Model struct {
-	// Header information
-	headerStyle lipgloss.Style
-	provider    string
-	sessionID   string
-	modelName   string
-	status      string // New: connection status
-
-	// Loading spinner
-	spin spinner.Model
-
-	// Chat window components
-	viewport    viewport.Model
-	textarea    textarea.Model
-	suggestions []string // New: for auto-completion
-	selected    int      // New: selected suggestion
-
-	// Styles
-	senderStyle       lipgloss.Style
-	errorStyle        lipgloss.Style
-	codeStyle         lipgloss.Style // New: for code blocks
-	timeStyle         lipgloss.Style // New: for timestamps
-	statusStyle       lipgloss.Style // New: for status bar
-	suggestionStyle   lipgloss.Style // New: for suggestions
-	thinkingTimeStyle lipgloss.Style // New style for thinking time
+	// Component models
+	theme       *Theme
+	layout      *LayoutDimensions
+	header      *HeaderModel
+	messageList *MessageListModel
+	inputArea   *InputAreaModel
+	statusBar   *StatusBarModel
 
 	// Context and config
 	cfg       *config.AppConfig
 	parentCtx context.Context
 
-	// Error and loading state
-	err     error
-	loading bool
+	// Business logic interfaces (injectable for testing)
+	messageProvider MessageProvider
+	delayProvider   DelayProvider
+	historyService  HistoryService
 
-	// Markdown and syntax highlighting
-	renderer  *glamour.TermRenderer
-	formatter chroma.Formatter // Updated: correct type for syntax highlighting
-
-	// Chat history
-	messages         []chatMessage
-	placeholderIndex int
-	editingIndex     int  // New: for message editing
-	isEditing        bool // New: editing state
-
-	thinkingStartTime time.Time // To track when Ollama request started for live timer
-	chatStartTime     time.Time // New: To track the actual start of the chat session
-
-	// New: Add tool registry
-	toolRegistry *agent.Registry
+	// State management
+	loading           bool
+	thinkingStartTime time.Time
+	chatStartTime     time.Time
 
 	// Available slash commands for suggestions
 	availableCommands []string
+
+	// Progress tracking
+	activeToolCalls map[string]*toolProgressState
 }
 
 var defaultSlashCommands = []string{
@@ -113,671 +176,559 @@ var defaultSlashCommands = []string{
 	"/model ", // Suggest space for model name
 	"/clear",
 	"/session ", // Suggest space for session id or action
+	"/status",   // Show current status and statistics
+	"/tools",    // List available tools
 	"/quit",
 }
 
-func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) Model {
-	// Initialize textarea with better styling
-	ta := textarea.New()
-	ta.Placeholder = "Type your message... (Ctrl+E to edit last, Tab for completion)"
-	ta.Focus()
-	ta.Prompt = "┃ "
-	ta.CharLimit = 2000 // Increased limit
-	ta.SetWidth(50)
-	ta.SetHeight(3)
-	ta.ShowLineNumbers = false
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-
-	// Initialize viewport with better styling
-	vp := viewport.New(50, 10)
-	vp.Style = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("63"))
-
-	// Initialize glamour renderer for markdown
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(vp.Width),
-	)
-	if err != nil {
-		logger.Get().Error("Failed to initialize glamour markdown renderer", "error", err)
-		renderer = nil
-	}
-
-	// Initialize syntax highlighting formatter
-	formatter := formatters.TTY256
-
-	// Initialize styles
-	headerStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("63")).
-		Foreground(lipgloss.Color("230")).
-		Padding(0, 1)
-
-	senderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("63")).
-		Bold(true)
-
-	timeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Italic(true)
-
-	codeStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("252")).
-		Padding(0, 1)
-
-	statusStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("237")).
-		Foreground(lipgloss.Color("252"))
-
-	suggestionStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("237")).
-		Foreground(lipgloss.Color("252"))
-
-	thinkingTimeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("242")) // New style for thinking time
-
-	// Setup loading spinner
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
-
-	// Create model
+// NewChatModel creates a new ChatModel using functional options
+func NewChatModel(opts ...ChatModelOption) Model {
+	// Initialize with default values
 	m := Model{
-		headerStyle:       headerStyle,
-		provider:          "Ollama",
-		sessionID:         time.Now().Format("20060102150405"),
-		modelName:         modelName,
-		status:            "Connected",
-		spin:              sp,
-		textarea:          ta,
-		viewport:          vp,
-		senderStyle:       senderStyle,
-		timeStyle:         timeStyle,
-		codeStyle:         codeStyle,
-		statusStyle:       statusStyle,
-		suggestionStyle:   suggestionStyle,
-		errorStyle:        lipgloss.NewStyle().Foreground(lipgloss.Color("196")),
-		thinkingTimeStyle: thinkingTimeStyle,
-		cfg:               cfg,
-		parentCtx:         ctx,
-		renderer:          renderer,
-		formatter:         formatter,
-		messages:          nil,
-		placeholderIndex:  -1,
-		editingIndex:      -1,
-		isEditing:         false,
+		theme:             NewDefaultTheme(),
+		availableCommands: defaultSlashCommands,
+		activeToolCalls:   make(map[string]*toolProgressState),
 		chatStartTime:     time.Now(),
-		availableCommands: defaultSlashCommands, // Initialize with default commands
 	}
 
-	// Initialize tool registry
-	registry := agent.NewRegistry()
-
-	// Register code analysis tools
-	if err := registry.Register(agent.NewCodeSearchTool(cfg.WorkspaceRoot)); err != nil {
-		logger.Get().Error("Failed to register code search tool", "error", err)
-	}
-	if err := registry.Register(agent.NewFileReadTool(cfg.WorkspaceRoot)); err != nil {
-		logger.Get().Error("Failed to register file read tool", "error", err)
-	}
-	if err := registry.Register(agent.NewCodebaseAnalyzeTool(cfg.WorkspaceRoot)); err != nil {
-		logger.Get().Error("Failed to register codebase analysis tool", "error", err)
-	}
-	if err := registry.Register(agent.NewGitTool(cfg.WorkspaceRoot)); err != nil {
-		logger.Get().Error("Failed to register Git tool", "error", err)
+	// Apply all provided options
+	for _, opt := range opts {
+		opt(&m)
 	}
 
-	// Add registry to model
-	m.toolRegistry = registry
+	// Ensure essential components are initialized if not provided by options
+	if m.theme == nil {
+		m.theme = NewDefaultTheme()
+	}
+	if m.layout == nil {
+		m.layout = NewLayoutDimensions(m.theme)
+	}
+
+	sessionID := m.chatStartTime.Format("20060102150405")
+	if m.header == nil {
+		m.header = NewHeaderModel(m.theme, "Unknown", "default", sessionID, "Initializing")
+	}
+	if m.statusBar == nil {
+		m.statusBar = NewStatusBarModel(m.theme, m.chatStartTime)
+	}
+	if m.inputArea == nil {
+		m.inputArea = NewInputAreaModel(m.theme, m.availableCommands)
+	}
+	if m.messageList == nil {
+		m.messageList = NewMessageListModel(m.theme, 50, 10)
+	}
+
+	// Ensure essential providers are set
+	if m.messageProvider == nil {
+		panic("MessageProvider is required for ChatModel")
+	}
+	if m.delayProvider == nil {
+		m.delayProvider = &RealDelayProvider{}
+	}
 
 	// Add welcome message
-	m.addMessage(chatMessage{
-		text:      "Welcome to Codex Lite Chat! Type your message and press Enter. Use Ctrl+E to edit your last message, Tab for completion.",
-		timestamp: time.Now(),
-		sender:    "System",
-	})
+	welcomeMsg := chatMessage{
+		text:       "Welcome to CGE Chat! Type your message or use '/' for commands.",
+		sender:     "System",
+		timestamp:  time.Now(),
+		isMarkdown: false,
+	}
+	m.messageList.AddMessage(welcomeMsg)
 
 	return m
 }
 
+// Legacy InitialModel function for compatibility - creates ChatPresenter automatically
+func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) Model {
+	// Create LLM client based on configuration
+	var llmClient llm.Client
+	switch cfg.LLM.Provider {
+	case "ollama":
+		ollamaConfig := cfg.GetOllamaConfig()
+		llmClient = llm.NewOllamaClient(ollamaConfig)
+	case "openai":
+		openaiConfig := cfg.GetOpenAIConfig()
+		llmClient = llm.NewOpenAIClient(openaiConfig)
+	case "gemini":
+		geminiConfig := cfg.GetGeminiConfig()
+		llmClient = llm.NewGeminiClient(geminiConfig)
+	default:
+		// Fallback to ollama if provider is unknown
+		ollamaConfig := cfg.GetOllamaConfig()
+		llmClient = llm.NewOllamaClient(ollamaConfig)
+	}
+
+	// Create tool registry with chat tools
+	workspaceRoot := cfg.Project.WorkspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = "." // Fallback to current directory
+	}
+
+	// Convert workspace root to absolute path to fix tool access issues
+	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		absWorkspaceRoot = workspaceRoot
+	}
+
+	toolFactory := agent.NewToolFactory(absWorkspaceRoot)
+	toolRegistry := toolFactory.CreateGenerationRegistry()
+
+	// Create chat presenter with enhanced system prompt that includes context instructions
+	systemPrompt := cfg.GetLoadedChatSystemPrompt()
+
+	// Enhance system prompt with context awareness instructions
+	enhancedSystemPrompt := systemPrompt + "\n\n" + buildContextAwarenessInstructions(absWorkspaceRoot)
+
+	presenter := NewChatPresenter(ctx, llmClient, toolRegistry, enhancedSystemPrompt, modelName)
+
+	// Create model with options
+	return NewChatModel(
+		WithParentContext(ctx),
+		WithInitialConfig(cfg),
+		WithMessageProvider(presenter),
+		WithDelayProvider(&RealDelayProvider{}),
+	)
+}
+
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.spin.Tick, textarea.Blink}
-	cmds = append(cmds, func() tea.Msg {
-		if m.parentCtx != nil {
-			<-m.parentCtx.Done()
+	return tea.Batch(
+		m.statusBar.GetSpinnerTickCmd(),
+		m.listenForMessages(), // Start listening for messages from the provider
+	)
+}
+
+func (m Model) sendMessage(prompt string) tea.Cmd {
+	// Send the message through the message provider
+	if err := m.messageProvider.Send(m.parentCtx, prompt); err != nil {
+		return func() tea.Msg {
+			return errMsg(err)
+		}
+	}
+	return nil
+}
+
+// listenForMessages creates a command that listens to the message provider's channel
+func (m Model) listenForMessages() tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case msg, ok := <-m.messageProvider.Messages():
+			if !ok {
+				return errMsg(fmt.Errorf("message provider channel closed"))
+			}
+			return chatMsgWrapper{ChatMessage: msg}
+		case <-m.parentCtx.Done():
 			return mainContextCancelledMsg{}
 		}
-		return nil
-	})
-	return tea.Batch(cmds...)
-}
-
-func (m Model) fetchOllamaResponse(prompt string) tea.Cmd {
-	return func() tea.Msg {
-		startTime := time.Now()
-
-		baseCtx := m.parentCtx
-		if baseCtx == nil {
-			baseCtx = context.Background()
-		}
-		ctxWithValues := context.WithValue(baseCtx, contextkeys.ConfigKey, m.cfg)
-		ctxWithValues = context.WithValue(ctxWithValues, contextkeys.LoggerKey, logger.Get())
-
-		ctx, cancel := context.WithTimeout(ctxWithValues, m.cfg.OllamaRequestTimeout+5*time.Second)
-		defer cancel()
-
-		// Base system prompt from configuration (content loaded from file via getter)
-		baseSystemPrompt := m.cfg.GetLoadedChatSystemPrompt() // Use the getter method
-
-		// Tool descriptions (if any tools are registered)
-		var toolDescriptions []map[string]interface{}
-		toolSystemPromptSegment := ""
-		if m.toolRegistry != nil && len(m.toolRegistry.List()) > 0 {
-			for _, tool := range m.toolRegistry.List() {
-				toolDescriptions = append(toolDescriptions, map[string]interface{}{
-					"name":        tool.Name(),
-					"description": tool.Description(),
-					"parameters":  tool.Parameters(),
-				})
-			}
-			toolSystemPromptSegment = fmt.Sprintf(`You have access to the following tools:
-%s
-
-To use a tool, respond ONLY with a JSON object in this exact format:
-{
-  "tool": "tool_name",
-  "params": {
-    // tool-specific parameters here
-  }
-}
-If you do not need to use a tool, respond to the user directly without any JSON.`, formatToolDescriptions(toolDescriptions))
-		}
-
-		// Combine system prompts
-		finalSystemPrompt := baseSystemPrompt
-		if toolSystemPromptSegment != "" {
-			if finalSystemPrompt != "" {
-				finalSystemPrompt += "\n\n" + toolSystemPromptSegment
-			} else {
-				finalSystemPrompt = toolSystemPromptSegment
-			}
-		}
-
-		// Prepend the final combined system prompt to the user prompt for Ollama
-		fullPrompt := prompt
-		if finalSystemPrompt != "" {
-			fullPrompt = finalSystemPrompt + "\n\nUser: " + prompt
-		}
-
-		response, err := ollama.Query(ctx, m.cfg.OllamaHostURL, m.modelName, fullPrompt)
-		duration := time.Since(startTime)
-
-		if err != nil {
-			return ollamaErrorMsg(fmt.Errorf("ollama query failed: %w", err))
-		}
-		return ollamaSuccessResponseMsg{response: response, duration: duration}
 	}
+}
+
+// convertToTuiMessage converts a ChatMessage to the internal chatMessage format
+func convertToTuiMessage(msg ChatMessage) chatMessage {
+	tuiMsg := chatMessage{
+		text:      msg.Text,
+		sender:    msg.Sender,
+		timestamp: msg.Timestamp,
+	}
+
+	// Map message types to appropriate display properties
+	switch msg.Type {
+	case AssistantMessage:
+		tuiMsg.isMarkdown = true
+	case ToolCallMessage:
+		tuiMsg.isToolCall = true
+		if name, ok := msg.Metadata["tool_name"].(string); ok {
+			tuiMsg.toolName = name
+		}
+		if id, ok := msg.Metadata["tool_call_id"].(string); ok {
+			tuiMsg.toolCallID = id
+		}
+		if params, ok := msg.Metadata["params"].(map[string]interface{}); ok {
+			tuiMsg.toolParams = params
+		}
+	case ToolResultMessage:
+		tuiMsg.isToolResult = true
+		if name, ok := msg.Metadata["tool_name"].(string); ok {
+			tuiMsg.toolName = name
+		}
+		if id, ok := msg.Metadata["tool_call_id"].(string); ok {
+			tuiMsg.toolCallID = id
+		}
+		if success, ok := msg.Metadata["success"].(bool); ok {
+			tuiMsg.toolSuccess = success
+		}
+		if duration, ok := msg.Metadata["duration"].(time.Duration); ok {
+			tuiMsg.toolDuration = duration
+		}
+	case ErrorMessage:
+		// Error messages are displayed as regular text, but could be styled differently
+	}
+
+	return tuiMsg
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	var cmd tea.Cmd
 
+	// Update all components
+	var cmd tea.Cmd
+	m.header, cmd = m.header.Update(msg)
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	m.statusBar, cmd = m.statusBar.Update(msg)
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	m.messageList, cmd = m.messageList.Update(msg)
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	// Handle main model logic
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Adjust for viewport border/frame
-		wFrame := m.viewport.Style.GetHorizontalFrameSize()
-		hFrame := m.viewport.Style.GetVerticalFrameSize()
-		m.viewport.Width = msg.Width - wFrame
-		m.viewport.Height = msg.Height - m.textarea.Height() - 1 - hFrame // -1 for the status bar line
-		m.textarea.SetWidth(msg.Width)
+		// First, update all components that need width/height information
+		var headerCmd, inputCmd tea.Cmd
 
-		if m.renderer != nil {
-			newRenderer, err := glamour.NewTermRenderer(
-				glamour.WithAutoStyle(),
-				glamour.WithWordWrap(m.viewport.Width),
-			)
-			if err != nil {
-				logger.Get().Error("Failed to re-initialize glamour markdown renderer on resize", "error", err)
-			} else {
-				m.renderer = newRenderer
-			}
-			m.rebuildViewport() // Important to apply new width
+		// Update header first to ensure height calculation is current
+		m.header, headerCmd = m.header.Update(msg)
+		if headerCmd != nil {
+			cmds = append(cmds, headerCmd)
 		}
-		// Bubbles also need to be updated with WindowSizeMsg
-		m.textarea, cmd = m.textarea.Update(msg)
-		cmds = append(cmds, cmd)
-		m.viewport, cmd = m.viewport.Update(msg)
-		cmds = append(cmds, cmd)
 
-	case mainContextCancelledMsg:
-		logger.Get().Info("Main context cancelled, attempting to save chat history and quit TUI.")
-		if err := m.SaveHistory(); err != nil {
-			m.err = fmt.Errorf("error saving history on context cancellation: %w", err)
-			logger.Get().Error("Failed to save chat history on context cancellation", "error", err, "sessionID", m.sessionID)
-		} else {
-			logger.Get().Info("Chat history saved successfully on context cancellation.", "sessionID", m.sessionID)
+		// Calculate viewport height using centralized layout dimensions with dynamic header
+		textareaHeight := m.inputArea.GetHeight()
+		suggestionAreaHeight := m.inputArea.GetSuggestionAreaHeight()
+
+		// Use the new header-aware layout validation
+		err := m.layout.ValidateLayoutWithHeader(
+			msg.Height,
+			textareaHeight,
+			suggestionAreaHeight,
+			m.layout.GetViewportFrameHeight(),
+			m.header,
+		)
+		if err != nil {
+			logger.Get().Warn("Layout validation failed", "error", err)
+			// In case of layout validation failure, try to use a safe fallback
+			logger.Get().Debug("Layout validation details",
+				"windowHeight", msg.Height,
+				"headerHeight", m.header.GetHeight(),
+				"textareaHeight", textareaHeight,
+				"suggestionAreaHeight", suggestionAreaHeight,
+				"statusBarHeight", m.layout.GetStatusBarHeight(),
+				"viewportFrameHeight", m.layout.GetViewportFrameHeight())
 		}
-		return m, tea.Quit
+
+		// Add debug layout information with dynamic header height
+		m.debugLayoutInfoWithHeader(msg.Width, msg.Height, textareaHeight, suggestionAreaHeight)
+
+		viewportHeight := m.layout.CalculateViewportHeightWithHeader(
+			msg.Height,
+			textareaHeight,
+			suggestionAreaHeight,
+			m.layout.GetViewportFrameHeight(),
+			m.header,
+		)
+
+		// Ensure viewport height is reasonable
+		if viewportHeight < m.layout.GetMinViewportHeight() {
+			logger.Get().Warn("Calculated viewport height is too small, using minimum",
+				"calculated", viewportHeight,
+				"minimum", m.layout.GetMinViewportHeight())
+			viewportHeight = m.layout.GetMinViewportHeight()
+		}
+
+		m.messageList.SetHeight(viewportHeight)
+
+		// Update input area after header calculations are complete
+		m.inputArea, inputCmd = m.inputArea.Update(msg)
+		if inputCmd != nil {
+			cmds = append(cmds, inputCmd)
+		}
 
 	case tea.KeyMsg:
-		// Handle Ctrl+C and Esc (when not editing) first as they cause an exit.
-		switch msg.Type {
-		case tea.KeyCtrlC:
+		// Handle key messages
+		switch msg.String() {
+		case "ctrl+c":
 			logger.Get().Info("Ctrl+C pressed, attempting to save chat history and quit TUI.")
 			if err := m.SaveHistory(); err != nil {
-				m.err = fmt.Errorf("error saving history on Ctrl+C: %w", err)
-				logger.Get().Error("Failed to save chat history on Ctrl+C", "error", err, "sessionID", m.sessionID)
+				m.statusBar.SetError(fmt.Errorf("error saving history on Ctrl+C: %w", err))
+				logger.Get().Error("Failed to save chat history on Ctrl+C", "error", err)
 			} else {
-				logger.Get().Info("Chat history saved successfully on Ctrl+C.", "sessionID", m.sessionID)
+				logger.Get().Info("Chat history saved successfully on Ctrl+C.")
 			}
 			return m, tea.Quit
-		case tea.KeyEsc:
-			if !m.isEditing { // If not editing, Esc quits and saves
-				logger.Get().Info("Escape pressed (not editing), attempting to save chat history and quit TUI.")
-				if err := m.SaveHistory(); err != nil {
-					m.err = fmt.Errorf("error saving history on Escape: %w", err)
-					logger.Get().Error("Failed to save chat history on Escape", "error", err, "sessionID", m.sessionID)
-				} else {
-					logger.Get().Info("Chat history saved successfully on Escape.", "sessionID", m.sessionID)
-				}
-				return m, tea.Quit
-			} else { // If editing, Esc cancels editing mode
-				m.isEditing = false
-				m.editingIndex = -1
-				m.textarea.Blur()
-				m.textarea.Reset()
-				m.textarea.Placeholder = "Type your message... (Ctrl+E to edit last, Tab for completion)"
-				// Let the textarea also process the Esc key (e.g., to clear its internal state if any)
-				m.textarea, cmd = m.textarea.Update(msg)
-				cmds = append(cmds, cmd)
-				// No return here, allow other processing or batching of cmds
+
+		case "tab":
+			if m.inputArea.ApplySelectedSuggestion() {
+				// Suggestion was applied, don't pass to input area
+				return m, nil
 			}
+			// No suggestion to apply, let input area handle it
+			m.inputArea, cmd = m.inputArea.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+
+		case "escape":
+			if m.inputArea.HasSuggestions() {
+				m.inputArea.ClearSuggestions()
+				return m, nil
+			}
+			// No suggestions to clear, handle as normal escape
+			m.inputArea, cmd = m.inputArea.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+
+		case "up":
+			if m.inputArea.HandleSuggestionNavigation("up") {
+				// Navigation handled by input area
+				return m, nil
+			}
+			// No suggestions, let input area handle normally
+			m.inputArea, cmd = m.inputArea.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+
+		case "down":
+			if m.inputArea.HandleSuggestionNavigation("down") {
+				// Navigation handled by input area
+				return m, nil
+			}
+			// No suggestions, let input area handle normally
+			m.inputArea, cmd = m.inputArea.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+
+		case "enter":
+			// If suggestions are active and one is selected, apply it first
+			if m.inputArea.ApplySelectedSuggestion() {
+				// Suggestion was applied, don't send message yet
+				return m, nil
+			}
+
+			if m.inputArea.GetValue() != "" && !m.loading {
+				// Start loading state with proper coordination
+				m.setLoading(true)
+
+				userPrompt := m.inputArea.GetValue()
+				m.messageList.AddMessage(chatMessage{
+					text:      userPrompt,
+					sender:    "You",
+					timestamp: time.Now(),
+				})
+
+				// Add a placeholder for the assistant response
+				m.messageList.AddMessage(chatMessage{
+					text:        "Thinking...",
+					sender:      "Assistant",
+					timestamp:   time.Now(),
+					placeholder: true,
+				})
+
+				m.inputArea.Reset()
+				return m, tea.Batch(m.sendMessage(userPrompt), m.statusBar.GetSpinnerTickCmd())
+			}
+
 		default:
-			// For keys not handled by the switch above (Ctrl+C, Esc),
-			// use the string representation for other specific keys or pass to textarea.
-			switch keyStr := msg.String(); keyStr {
-			case "enter":
-				// If suggestions are active and one is selected, apply it first
-				if len(m.suggestions) > 0 && m.selected >= 0 && m.selected < len(m.suggestions) {
-					m.textarea.SetValue(m.suggestions[m.selected])
-					m.textarea.CursorEnd() // Move cursor to end after setting value
-					m.suggestions = nil    // Clear suggestions
-					m.selected = -1        // Reset selection
-					// The message will be sent with the applied suggestion in the next part of this case
-				}
-
-				if m.textarea.Value() != "" && !m.loading {
-					m.thinkingStartTime = time.Now() // Set start time for live timer
-					m.loading = true
-					userPrompt := m.textarea.Value()
-					m.addMessage(chatMessage{text: userPrompt, sender: "You", timestamp: time.Now()})
-					m.textarea.Reset()
-					m.viewport.GotoBottom()
-					m.addMessage(chatMessage{text: "...", sender: "AI", timestamp: time.Now(), placeholder: true})
-					m.placeholderIndex = len(m.messages) - 1
-					cmds = append(cmds, m.spin.Tick, m.fetchOllamaResponse(userPrompt))
-				} else {
-					// If enter is pressed on empty textarea or while loading, let textarea handle it (might do nothing or add newline)
-					m.textarea, cmd = m.textarea.Update(msg)
-					cmds = append(cmds, cmd)
-				}
-			case "ctrl+e":
-				m.startEditing()
-				m.textarea, cmd = m.textarea.Update(msg) // Pass to textarea for consistency or specific handling
+			// Pass other keys to input area
+			m.inputArea, cmd = m.inputArea.Update(msg)
+			if cmd != nil {
 				cmds = append(cmds, cmd)
-			case "tab":
-				if len(m.suggestions) > 0 {
-					m.selected = (m.selected + 1) % len(m.suggestions)
-					// Tab consumed for suggestion cycling, do not pass to textarea
-				} else {
-					m.textarea, cmd = m.textarea.Update(msg) // If no suggestions, let textarea handle Tab
-					cmds = append(cmds, cmd)
-				}
-				// After handling tab, update suggestions in case the input text could trigger new ones (though unlikely for pure tab)
-				m.updateSuggestions(m.textarea.Value())
-			default: // Crucial for typing, backspace, arrows within textarea
-				m.textarea, cmd = m.textarea.Update(msg)
-				cmds = append(cmds, cmd)
-				// After any key that modifies the textarea, update suggestions
-				m.updateSuggestions(m.textarea.Value())
 			}
 		}
 
-	case spinner.TickMsg:
-		if m.loading {
-			m.spin, cmd = m.spin.Update(msg)
-			cmds = append(cmds, cmd)
+	case ollamaSuccessResponseMsg:
+		// End loading state with proper coordination and cleanup
+		m.setLoading(false)
+		m.statusBar.ClearError()
+
+		// Calculate thinking time from the start time
+		var thinkingTime time.Duration
+		if !m.thinkingStartTime.IsZero() {
+			thinkingTime = msg.duration
 		}
 
-		case ollamaSuccessResponseMsg:
-			m.loading = false
-			botResponseText := msg.response
-			responseTime := msg.duration
-			// Check for tool invocation
-			var toolInvoke struct {
-				Tool   string          `json:"tool"`
-				Params json.RawMessage `json:"params"`
-			}
-			trimmed := strings.TrimSpace(botResponseText)
-			if strings.HasPrefix(trimmed, "{") {
-				if err := json.Unmarshal([]byte(botResponseText), &toolInvoke); err == nil && toolInvoke.Tool != "" {
-					if tool, ok := m.toolRegistry.Get(toolInvoke.Tool); ok {
-						result, toolErr := tool.Execute(m.parentCtx, toolInvoke.Params)
-						if toolErr != nil {
-							m.replacePlaceholder(chatMessage{
-								text:      fmt.Sprintf("Error executing tool %s: %v", toolInvoke.Tool, toolErr),
-								sender:    "System",
-								timestamp: time.Now(),
-							})
-						} else {
-							resultJSON, _ := json.MarshalIndent(result, "", "  ")
-							m.replacePlaceholder(chatMessage{
-								text:       fmt.Sprintf("Tool %s result:\n```json\n%s\n```", toolInvoke.Tool, string(resultJSON)),
-								sender:     "System",
-								timestamp:  time.Now(),
-								isMarkdown: true,
-							})
-						}
-					} else {
-						m.replacePlaceholder(chatMessage{
-							text:      fmt.Sprintf("Unknown tool requested: %s", toolInvoke.Tool),
-							sender:    "System",
-							timestamp: time.Now(),
-						})
-					}
-					m.viewport.GotoBottom()
-					return m, nil
-				}
-			}
-			// Regular AI response
-			m.replacePlaceholder(chatMessage{
-				text:         botResponseText,
-				sender:       "AI",
-				timestamp:    time.Now(),
-				ThinkingTime: responseTime,
-				isMarkdown:   true,
-			})
-			m.viewport.GotoBottom()
+		responseMsg := chatMessage{
+			text:         msg.response,
+			sender:       "Assistant",
+			timestamp:    time.Now(),
+			isMarkdown:   true,
+			ThinkingTime: thinkingTime,
+		}
+		m.messageList.ReplacePlaceholder(responseMsg)
+
+		// Reset thinking start time
+		m.thinkingStartTime = time.Time{}
 
 	case ollamaErrorMsg:
-		m.loading = false
-		errorMsgString := fmt.Sprintf("Error: %v", error(msg)) // Convert ollamaErrorMsg to error then string
-		m.replacePlaceholder(chatMessage{
-			text:      m.errorStyle.Render(errorMsgString), // Ensure errorStyle is applied
+		// End loading state and handle error
+		m.setError(msg)
+
+		errorMsg := chatMessage{
+			text:      fmt.Sprintf("Error: %v", msg),
 			sender:    "System",
 			timestamp: time.Now(),
-		})
+		}
+		m.messageList.ReplacePlaceholder(errorMsg)
 
-   case errMsg:
-       m.err = msg
+		// Reset thinking start time
+		m.thinkingStartTime = time.Time{}
 
-   case tea.MouseMsg:
-       m.viewport, cmd = m.viewport.Update(msg)
-       cmds = append(cmds, cmd)
+	case errMsg:
+		m.setError(msg)
 
-	// New: Check if the response is a tool invocation (assuming this was intended from previous structure)
-	// This case might need to be reviewed if it's from an ollamaSuccessResponseMsg.text
+	// Tool call message handlers
+	case toolStartMsg:
+		logger.Get().Info("Tool call started", "toolCallID", msg.toolCallID, "toolName", msg.toolName)
+
+		// Create new tool progress state
+		m.activeToolCalls[msg.toolCallID] = &toolProgressState{
+			toolName:     msg.toolName,
+			startTime:    time.Now(),
+			progress:     0.0,
+			status:       "Starting...",
+			step:         1,
+			totalSteps:   1,
+			messageIndex: -1, // Will be set when message is added
+		}
+
+		// Add tool call message to chat
+		toolCallMsg := chatMessage{
+			text:       fmt.Sprintf("Executing %s...", msg.toolName),
+			sender:     "System",
+			timestamp:  time.Now(),
+			isToolCall: true,
+			toolName:   msg.toolName,
+			toolCallID: msg.toolCallID,
+			toolParams: msg.params,
+		}
+		m.messageList.AddMessage(toolCallMsg)
+
+		// Update components with active tool calls using centralized method
+		m.updateToolCallState()
+
+	case toolProgressMsg:
+		logger.Get().Debug("Tool call progress update", "toolCallID", msg.toolCallID, "progress", msg.progress, "status", msg.status)
+
+		// Update existing tool progress state
+		if state, exists := m.activeToolCalls[msg.toolCallID]; exists {
+			state.progress = msg.progress
+			state.status = msg.status
+			state.step = msg.step
+			state.totalSteps = msg.totalSteps
+
+			// Update components with latest progress using centralized method
+			m.updateToolCallState()
+		} else {
+			logger.Get().Warn("Received progress for unknown tool call", "toolCallID", msg.toolCallID)
+		}
+
+	case toolCompleteMsg:
+		logger.Get().Info("Tool call completed", "toolCallID", msg.toolCallID, "success", msg.success, "duration", msg.duration)
+
+		// Remove from active tool calls
+		delete(m.activeToolCalls, msg.toolCallID)
+
+		// Add tool result message to chat
+		var resultText string
+		if msg.success {
+			resultText = msg.result
+		} else {
+			resultText = fmt.Sprintf("Tool execution failed: %s", msg.error)
+		}
+
+		toolResultMsg := chatMessage{
+			text:         resultText,
+			sender:       "System",
+			timestamp:    time.Now(),
+			isToolResult: true,
+			toolName:     msg.toolName,
+			toolCallID:   msg.toolCallID,
+			toolSuccess:  msg.success,
+			toolDuration: msg.duration,
+		}
+		m.messageList.AddMessage(toolResultMsg)
+
+		// Update components with updated active tool calls using centralized method
+		m.updateToolCallState()
+
+	case chatMsgWrapper:
+		// Handle new messages from the MessageProvider
+		chatMessage := msg.ChatMessage
+		switch chatMessage.Type {
+		case UserMessage:
+			// User messages are typically added when sending, but could be echoed back
+			m.messageList.AddMessage(convertToTuiMessage(chatMessage))
+		case AssistantMessage:
+			m.setLoading(false) // Stop loading when we receive assistant response
+			m.messageList.ReplacePlaceholder(convertToTuiMessage(chatMessage))
+		case ErrorMessage:
+			m.setError(fmt.Errorf("%s", chatMessage.Text))
+			m.messageList.ReplacePlaceholder(convertToTuiMessage(chatMessage))
+		case ToolCallMessage:
+			// Display tool call attempt
+			m.messageList.AddMessage(convertToTuiMessage(chatMessage))
+			if _, ok := chatMessage.Metadata["tool_call_id"].(string); ok {
+				m.updateToolCallState()
+			}
+		case ToolResultMessage:
+			// Display tool result
+			m.messageList.AddMessage(convertToTuiMessage(chatMessage))
+			m.updateToolCallState()
+		case SystemMessage:
+			// Display system messages
+			m.messageList.AddMessage(convertToTuiMessage(chatMessage))
+		}
+		m.messageList.GotoBottom()
+		// Return a new command to continue listening
+		return m, m.listenForMessages()
+
+	default:
+		// Update input area for other messages
+		m.inputArea, cmd = m.inputArea.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
-
-	// If viewport needs to react to any other messages (e.g., mouse events not directly handled)
-	// Check if viewport update is needed, but avoid double-updating on WindowSizeMsg.
-	// This was commented out, let's keep it that way unless a specific need arises.
-	// m.viewport, cmd = m.viewport.Update(msg)
-	// cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
-}
-
-// rebuildViewport re-renders all stored messages into the viewport, applying markdown and wrapping on resize.
-func (m *Model) rebuildViewport() {
-	var b strings.Builder
-	for _, cm := range m.messages {
-		if cm.isMarkdown && m.renderer != nil && strings.HasPrefix(cm.text, "Bot: ") {
-			raw := strings.TrimPrefix(cm.text, "Bot: ")
-			rendered, err := m.renderer.Render(raw)
-			if err != nil {
-				logger.Get().Warn("Markdown rendering failed in rebuildViewport", "error", err)
-				b.WriteString(cm.text)
-			} else {
-				b.WriteString("Bot: " + strings.TrimSpace(rendered))
-			}
-		} else {
-			b.WriteString(cm.text)
-		}
-		b.WriteString("\n")
-	}
-	m.viewport.SetContent(b.String())
-	m.viewport.GotoBottom()
-}
-
-// addMessage appends a new message to history; if placeholder is true, tracks its index for replacement.
-func (m *Model) addMessage(msg chatMessage) {
-	if msg.timestamp.IsZero() {
-		msg.timestamp = time.Now()
-	}
-
-	// Process code blocks in markdown
-	if msg.isMarkdown {
-		msg.text = m.processCodeBlocks(msg.text)
-	}
-
-	m.messages = append(m.messages, msg)
-	m.rebuildViewport()
-}
-
-// replacePlaceholder replaces the current placeholder message (if any) with real content; otherwise appends.
-func (m *Model) replacePlaceholder(msg chatMessage) {
-	if m.placeholderIndex >= 0 && m.placeholderIndex < len(m.messages) {
-		m.messages[m.placeholderIndex] = msg
-		m.placeholderIndex = -1
-	} else {
-		m.messages = append(m.messages, msg)
-	}
-	m.rebuildViewport()
-}
-
-// processCodeBlocks handles syntax highlighting of code blocks in markdown
-func (m *Model) processCodeBlocks(text string) string {
-	// Split the text into lines
-	lines := strings.Split(text, "\n")
-	var result strings.Builder
-	var codeBlock strings.Builder
-	inCodeBlock := false
-	var language string
-
-	for _, line := range lines {
-		if strings.HasPrefix(line, "```") {
-			if !inCodeBlock {
-				// Start of code block
-				inCodeBlock = true
-				language = strings.TrimPrefix(line, "```")
-				continue
-			} else {
-				// End of code block
-				inCodeBlock = false
-				// Process the collected code block
-				code := codeBlock.String()
-				highlighted := m.highlightCode(code, language)
-				result.WriteString(highlighted)
-				result.WriteString("\n")
-				codeBlock.Reset()
-				continue
-			}
-		}
-
-		if inCodeBlock {
-			codeBlock.WriteString(line)
-			codeBlock.WriteString("\n")
-		} else {
-			result.WriteString(line)
-			result.WriteString("\n")
-		}
-	}
-
-	return result.String()
-}
-
-// highlightCode applies syntax highlighting to a code block
-func (m *Model) highlightCode(code, language string) string {
-	// Get lexer for the language
-	l := lexers.Get(language)
-	if l == nil {
-		l = lexers.Fallback
-	}
-	l = chroma.Coalesce(l)
-
-	// Tokenize the code
-	iterator, err := l.Tokenise(nil, code)
-	if err != nil {
-		return code // Return original code if highlighting fails
-	}
-
-	// Apply highlighting
-	var buf strings.Builder
-	style := styles.Get("monokai")
-	if style == nil {
-		style = styles.Fallback
-	}
-	err = m.formatter.Format(&buf, style, iterator)
-	if err != nil {
-		return code
-	}
-
-	return m.codeStyle.Render(buf.String())
-}
-
-// New: Handle message editing
-func (m *Model) startEditing() {
-	if len(m.messages) > 0 && m.messages[len(m.messages)-1].sender == "You" {
-		m.isEditing = true
-		m.editingIndex = len(m.messages) - 1
-		m.textarea.SetValue(m.messages[m.editingIndex].text)
-	}
-}
-
-// updateSuggestions populates the suggestions list based on the input.
-// For now, it suggests slash commands if the input starts with "/".
-func (m *Model) updateSuggestions(input string) {
-	m.suggestions = nil // Clear previous suggestions
-	m.selected = -1     // Reset selection
-
-	if strings.HasPrefix(input, "/") {
-		var currentSuggestions []string
-		for _, cmd := range m.availableCommands {
-			if strings.HasPrefix(cmd, input) {
-				currentSuggestions = append(currentSuggestions, cmd)
-			}
-		}
-		if len(currentSuggestions) > 0 {
-			m.suggestions = currentSuggestions
-			m.selected = 0 // Default to selecting the first suggestion
-		}
-	}
 }
 
 func (m Model) View() string {
 	var view strings.Builder
 
 	// Header
-	header := m.headerStyle.Render(fmt.Sprintf("Chat with %s (%s) | Session: %s | Status: %s",
-		m.provider, m.modelName, m.sessionID, m.status))
-	view.WriteString(header)
+	view.WriteString(m.header.View())
 	view.WriteString("\n")
 
-	// Messages
-	var renderedMessages []string
-	for _, msg := range m.messages {
-		var sender string
-		var content string
-
-		sender = m.senderStyle.Render(msg.sender + ":")
-		timestamp := m.timeStyle.Render(msg.timestamp.Format("15:04:05"))
-
-		// Add thinking time if available (for AI messages)
-		thinkingTimeStr := ""
-		if msg.sender == "AI" && msg.ThinkingTime > 0 {
-			thinkingTimeStr = m.thinkingTimeStyle.Render(fmt.Sprintf(" (took %.2fs)", msg.ThinkingTime.Seconds()))
-		}
-
-		if msg.placeholder {
-			content = msg.text // Placeholder text, no special rendering
-		} else if msg.isMarkdown {
-			// Process for code blocks first
-			processedText := m.processCodeBlocks(msg.text)
-			renderedMarkdown, err := m.renderer.Render(processedText)
-			if err != nil {
-				content = m.errorStyle.Render("Failed to render markdown: " + err.Error())
-			} else {
-				content = renderedMarkdown
-			}
-		} else if msg.isCode {
-			highlightedCode := m.highlightCode(msg.text, msg.language)
-			content = m.codeStyle.Render(highlightedCode)
-		} else {
-			content = msg.text // Plain text
-		}
-
-		// Assemble the message line
-		// Check if content is multi-line (often true for markdown/code)
-		if strings.Contains(content, "\n") {
-			renderedMessages = append(renderedMessages, fmt.Sprintf("%s %s%s\n%s", sender, timestamp, thinkingTimeStr, content))
-		} else {
-			renderedMessages = append(renderedMessages, fmt.Sprintf("%s %s%s %s", sender, timestamp, thinkingTimeStr, content))
-		}
-	}
-
-	m.viewport.SetContent(strings.Join(renderedMessages, "\n"))
-
-	// Viewport and Textarea
-	view.WriteString(m.viewport.View())
+	// Message List (viewport)
+	view.WriteString(m.messageList.View())
 	view.WriteString("\n")
-	view.WriteString(m.textarea.View())
 
-	// Render suggestions if any
-	if len(m.suggestions) > 0 {
-		view.WriteString("\n") // Add a line break before suggestions
-		suggestionLines := make([]string, len(m.suggestions))
-		for i, sug := range m.suggestions {
-			if i == m.selected {
-				suggestionLines[i] = m.suggestionStyle.Copy().Reverse(true).Render("> " + sug)
-			} else {
-				suggestionLines[i] = m.suggestionStyle.Render("  " + sug)
-			}
-		}
-		view.WriteString(strings.Join(suggestionLines, "\n"))
-	}
-
-	// Status bar (optional, can show loading state, suggestions, etc.)
-	statusBar := ""
-	if m.loading {
-		elapsed := time.Since(m.thinkingStartTime)
-		// Format elapsed time, e.g., to one decimal place for seconds
-		elapsedStr := fmt.Sprintf("%.1fs", elapsed.Seconds())
-		statusBar = m.statusStyle.Render(fmt.Sprintf("%s Thinking... (%s)", m.spin.View(), elapsedStr))
-	} else if m.err != nil {
-		statusBar = m.errorStyle.Render("Error: " + m.err.Error())
-	} else {
-		statusBar = m.statusStyle.Render("Ctrl+C to quit. Ctrl+E to edit last. Tab for suggestions.")
-	}
+	// Input Area (textarea + suggestions)
+	view.WriteString(m.inputArea.View())
 	view.WriteString("\n")
-	view.WriteString(statusBar)
+
+	// Status Bar
+	view.WriteString(m.statusBar.View())
 
 	return view.String()
 }
 
 // LoadHistory loads a previous chat history into the model
 func (m *Model) LoadHistory(history *ChatHistory) {
-	m.sessionID = history.SessionID
-	m.modelName = history.ModelName
-	m.messages = history.Messages
-
-	// Rebuild the viewport with the loaded messages
-	m.rebuildViewport()
+	m.header.SetSessionID(history.SessionID)
+	m.header.SetModelName(history.ModelName)
+	m.messageList.LoadHistory(history.Messages)
 }
 
-// New: Helper function to format tool descriptions
 func formatToolDescriptions(tools []map[string]interface{}) string {
 	var sb strings.Builder
 	for _, tool := range tools {
@@ -785,4 +736,143 @@ func formatToolDescriptions(tools []map[string]interface{}) string {
 			tool["name"], tool["description"], tool["parameters"])
 	}
 	return sb.String()
+}
+
+// State management helper methods
+
+// setLoading sets the loading state consistently across components
+func (m *Model) setLoading(loading bool) {
+	m.loading = loading
+	if loading {
+		m.thinkingStartTime = time.Now()
+	}
+	m.statusBar.SetLoading(loading)
+}
+
+// setError sets error state and clears loading
+func (m *Model) setError(err error) {
+	m.loading = false
+	m.statusBar.SetLoading(false)
+	m.statusBar.SetError(err)
+}
+
+// updateToolCallState updates tool call state consistently across components
+func (m *Model) updateToolCallState() {
+	m.statusBar.SetActiveToolCalls(len(m.activeToolCalls))
+	m.messageList.SetActiveToolCalls(m.activeToolCalls)
+
+	// Use centralized status bar state update
+	m.updateStatusBarState()
+}
+
+// updateStatusBarState performs centralized, atomic status bar state updates
+func (m *Model) updateStatusBarState() {
+	state := StatusBarState{
+		ActiveToolCalls:  len(m.activeToolCalls),
+		SessionStartTime: m.chatStartTime,
+		Loading:          m.loading,
+		Err:              nil, // Errors are set separately via SetError
+		LastUpdateTime:   time.Now(),
+	}
+	m.statusBar.UpdateState(state)
+}
+
+// validateState performs state consistency checks (for debugging)
+func (m *Model) validateState() bool {
+	// Check tool call state consistency
+	if len(m.activeToolCalls) < 0 {
+		logger.Get().Warn("Negative active tool call count")
+		return false
+	}
+
+	return true
+}
+
+// debugLayoutInfo logs detailed layout information for troubleshooting
+func (m *Model) debugLayoutInfo(windowWidth, windowHeight, textareaHeight, suggestionAreaHeight int) {
+	logger.Get().Debug("Layout debug info",
+		"windowWidth", windowWidth,
+		"windowHeight", windowHeight,
+		"headerHeight", m.layout.GetHeaderHeight(),
+		"statusBarHeight", m.layout.GetStatusBarHeight(),
+		"inputAreaHeight", textareaHeight,
+		"suggestionAreaHeight", suggestionAreaHeight,
+		"viewportFrameHeight", m.layout.GetViewportFrameHeight(),
+		"calculatedViewportHeight", m.layout.CalculateViewportHeight(windowHeight, textareaHeight, suggestionAreaHeight, m.layout.GetViewportFrameHeight()),
+		"activeToolCalls", len(m.activeToolCalls),
+	)
+}
+
+// debugLayoutInfoWithHeader logs detailed layout information for troubleshooting with dynamic header height
+func (m *Model) debugLayoutInfoWithHeader(windowWidth, windowHeight, textareaHeight, suggestionAreaHeight int) {
+	logger.Get().Debug("Layout debug info with dynamic header height",
+		"windowWidth", windowWidth,
+		"windowHeight", windowHeight,
+		"headerHeight", m.header.GetHeight(),
+		"statusBarHeight", m.layout.GetStatusBarHeight(),
+		"inputAreaHeight", textareaHeight,
+		"suggestionAreaHeight", suggestionAreaHeight,
+		"viewportFrameHeight", m.layout.GetViewportFrameHeight(),
+		"calculatedViewportHeight", m.layout.CalculateViewportHeightWithHeader(windowHeight, textareaHeight, suggestionAreaHeight, m.layout.GetViewportFrameHeight(), m.header),
+		"activeToolCalls", len(m.activeToolCalls),
+	)
+}
+
+// Getter methods for accessing model components
+
+// Header returns the header model
+func (m *Model) Header() *HeaderModel {
+	return m.header
+}
+
+// MessageList returns the message list model
+func (m *Model) MessageList() *MessageListModel {
+	return m.messageList
+}
+
+// InputArea returns the input area model
+func (m *Model) InputArea() *InputAreaModel {
+	return m.inputArea
+}
+
+// StatusBar returns the status bar model
+func (m *Model) StatusBar() *StatusBarModel {
+	return m.statusBar
+}
+
+// Theme returns the theme
+func (m *Model) Theme() *Theme {
+	return m.theme
+}
+
+// buildContextAwarenessInstructions creates enhanced context instructions for the LLM
+func buildContextAwarenessInstructions(workspaceRoot string) string {
+	return fmt.Sprintf(`
+## 🔍 Environment Context Instructions
+
+You are operating in the following environment:
+- **Working Directory**: %s
+- **Context Tools Available**: git_info, list_directory, codebase_search
+
+### Context Gathering Protocol
+Before starting any complex task:
+1. Use git_info to understand the current Git branch and repository status
+2. Use list_directory to explore the project structure and understand the codebase layout
+3. Consider the project type and existing patterns before making recommendations
+
+### Workspace Awareness
+- All file paths should be interpreted relative to the workspace root
+- Check Git status before making changes that might conflict with existing work
+- Understand the project structure before suggesting new files or directories
+- Follow existing code patterns and conventions evident in the codebase
+
+### Enhanced Decision Making
+Factor in:
+- Current Git branch and any uncommitted changes
+- Project structure and organization patterns
+- Existing dependencies and frameworks in use
+- File naming and directory organization conventions
+
+Use the context tools proactively to provide more relevant and contextually-aware assistance.
+`, workspaceRoot)
 }

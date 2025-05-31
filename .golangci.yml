@@ -1,0 +1,134 @@
+run:
+  timeout: 5m
+  go: "1.23"
+  modules-download-mode: readonly
+
+linters-settings:
+  govet:
+    # Use default govet settings without deprecated check-shadowing
+    # Shadow checking is now handled by the predeclared linter
+    enable-all: false
+    disable:
+      - fieldalignment  # Can be noisy
+  gocyclo:
+    min-complexity: 15
+  dupl:
+    threshold: 100
+  goconst:
+    min-len: 2
+    min-occurrences: 2
+  misspell:
+    locale: US
+  lll:
+    line-length: 140
+  goimports:
+    local-prefixes: github.com/castrovroberto/CGE
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - dupImport # https://github.com/go-critic/go-critic/issues/845
+      - ifElseChain
+      - octalLiteral
+      - whyNoLint
+      - wrapperFunc
+  funlen:
+    lines: 100
+    statements: 50
+  mnd:
+    # Replaces gomnd
+    checks:
+      - argument
+      - case
+      - condition
+      - operation
+      - return
+      - assign
+    ignored-numbers:
+      - '0'
+      - '1'
+      - '2'
+      - '3'
+    ignored-functions:
+      - strings.SplitN
+
+linters:
+  disable-all: true
+  enable:
+    - bodyclose
+    - depguard
+    - dogsled
+    - dupl
+    - errcheck
+    - exhaustive
+    - funlen
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - gofmt
+    - goimports
+    - goprintffuncname
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - noctx
+    - nolintlint
+    - predeclared     # Replaces shadow functionality
+    - rowserrcheck
+    - staticcheck
+    - stylecheck
+    - typecheck
+    - unconvert
+    - unparam
+    - unused          # Replaces deadcode, structcheck, varcheck
+    - whitespace
+    - mnd             # Replaces gomnd
+    # Removed deprecated linters:
+    # - deadcode      -> replaced by unused
+    # - exportloopref -> no longer needed in Go 1.22+
+    # - gomnd         -> replaced by mnd
+    # - structcheck   -> replaced by unused
+    # - varcheck      -> replaced by unused
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - mnd
+        - funlen
+        - gocyclo
+    - path: internal/agent/testing/
+      linters:
+        - mnd
+        - funlen
+        - dupl
+    - path: examples/
+      linters:
+        - mnd
+        - funlen
+        - gocyclo
+    - path: cmd/
+      linters:
+        - mnd
+  exclude:
+    # errcheck: Almost all programs ignore errors on these functions and in most cases it's ok
+    - Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*printf?|os\.(Un)?Setenv). is not checked
+    # govet: Common false positives
+    - (possible misuse of unsafe.Pointer|should have signature)
+    # staticcheck: Developers tend to write in C-style with an explicit 'break' in a 'switch', so it's ok to ignore
+    - ineffective break statement. Did you mean to break out of the outer loop
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+service:
+  golangci-lint-version: 1.64.x 

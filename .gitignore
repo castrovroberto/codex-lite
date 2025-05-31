@@ -23,14 +23,56 @@ go.work.sum
 
 # env file
 .env
-.codex-lite.yaml
+.cge.yaml
 
 # project files
 project/
 
 # binaries
-codex-lite
+CGE
+cge
+cge-*
 
 # Docker files
 Dockerfile
 .dockerignore
+
+# Development and debugging artifacts
+debug-output-*
+test-results.log
+integration-test-results.log
+coverage.html
+coverage.out
+gosec.sarif
+govulncheck.json
+
+# Build artifacts from Makefile
+*.html
+*.sarif
+
+# golangci-lint cache
+.golangci-lint-cache
+
+# Linting configuration files (keep in repo)
+# .golangci.yml
+# .golangci-fast.yml  
+# .golangci-essential.yml
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Chat history
+.cge/

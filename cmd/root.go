@@ -8,23 +8,22 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/castrovroberto/codex-lite/internal/config" // Assuming this path is correct
-	"github.com/castrovroberto/codex-lite/internal/contextkeys"
-	"github.com/castrovroberto/codex-lite/internal/logger" // New import
+	"github.com/castrovroberto/CGE/internal/config" // Assuming this path is correct
+	"github.com/castrovroberto/CGE/internal/contextkeys"
+	"github.com/castrovroberto/CGE/internal/logger" // New import
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "codex-lite",
+	Use:   "CGE",
 	Short: "Codex Lite: Your AI-powered coding assistant.",
 	Long: `Codex Lite is a command-line tool that leverages local LLMs (via Ollama)
 to provide code explanation, analysis, and interactive chat capabilities.
 
-Configure it via a .codex-lite.yaml file in your home or current directory,
+Configure it via a .cge.yaml file in your home or current directory,
 environment variables (prefixed with CODEXLITE_), or command-line flags.
 For example:
 
@@ -39,7 +38,7 @@ to quickly create a Cobra application.`,
 		if err := config.LoadConfig(cfgFile); err != nil {
 			return fmt.Errorf("failed to load configuration: %w", err)
 		}
-		logger.InitLogger(config.Cfg.LogLevel) // Initialize logger after config is loaded
+		logger.InitLogger(config.Cfg.Logging.Level) // Initialize logger after config is loaded
 
 		// The context is now set by ExecuteContext before this PersistentPreRunE is called.
 		// We retrieve it and add our values.
@@ -82,13 +81,29 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.codex-lite.yaml or ./.codex-lite.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.cge/codex.toml, $HOME/.codex.toml or ./codex.toml)")
 
 	// Bind flags for global config settings that can be overridden via root command
-	rootCmd.PersistentFlags().String("ollama-host-url", "", "Ollama host URL (e.g., http://localhost:11434)")
-	viper.BindPFlag("ollama_host_url", rootCmd.PersistentFlags().Lookup("ollama-host-url"))
-	rootCmd.PersistentFlags().String("default-model", "", "Default LLM model name")
-	viper.BindPFlag("default_model", rootCmd.PersistentFlags().Lookup("default-model"))
-	rootCmd.PersistentFlags().StringSlice("default-agent-list", []string{}, "Default comma-separated list of agents (overrides config if set, e.g., explain,syntax)")
-	viper.BindPFlag("default_agent_list", rootCmd.PersistentFlags().Lookup("default-agent-list"))
+	// Example: rootCmd.PersistentFlags().String("llm-provider", "", "LLM provider (e.g., ollama, openai)")
+	// viper.BindPFlag("llm.provider", rootCmd.PersistentFlags().Lookup("llm-provider"))
+
+	// rootCmd.PersistentFlags().String("llm-model", "", "LLM model name")
+	// viper.BindPFlag("llm.model", rootCmd.PersistentFlags().Lookup("llm-model"))
+
+	// Removed default-agent-list as analyze command is deprecated
+	// rootCmd.PersistentFlags().StringSlice("default-agent-list", []string{}, "Default comma-separated list of agents (overrides config if set, e.g., explain,syntax)")
+	// viper.BindPFlag("default_agent_list", rootCmd.PersistentFlags().Lookup("default-agent-list"))
+
+	// Update references to old config names in help text
+	// Ensure all viper.BindPFlag calls correctly map to the new AppConfig structure if global flags are kept.
+	// For example, if ollama_host_url is now under llm.ollama_host_url:
+	// rootCmd.PersistentFlags().String("ollama-host-url", "", "Ollama host URL (e.g., http://localhost:11434)")
+	// viper.BindPFlag("llm.ollama_host_url", rootCmd.PersistentFlags().Lookup("ollama-host-url"))
+
+	// Default model is now under llm.model
+	// rootCmd.PersistentFlags().String("default-model", "", "Default LLM model name")
+	// viper.BindPFlag("llm.model", rootCmd.PersistentFlags().Lookup("default-model"))
+
+	// It's cleaner to manage these via the codex.toml or environment variables (CGE_LLM_PROVIDER, CGE_LLM_MODEL)
+	// For now, removing the direct persistent flags for ollama_host_url and default_model to simplify and encourage config file usage.
 }

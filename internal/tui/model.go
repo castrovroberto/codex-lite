@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -10,8 +9,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/castrovroberto/codex-lite/internal/orchestrator"
 )
 
 var (
@@ -43,7 +40,7 @@ var (
 )
 
 // agentProgressMsg is a tea.Msg to send agent progress updates to the TUI model.
-type agentProgressMsg orchestrator.AgentProgressUpdate
+// type agentProgressMsg orchestrator.AgentProgressUpdate // Removed
 
 // New messages for overall content update and error reporting
 type ContentUpdateMsg string
@@ -51,22 +48,22 @@ type ErrorMsg error
 
 // Model represents the main TUI model
 type Model struct {
-	viewport            viewport.Model
-	spinner             spinner.Model
-	progress            ProgressModel
-	header              HeaderModel
-	content             string
-	ready               bool
-	err                 error
-	width               int
-	height              int
-	processing          bool
-	startTime           time.Time
-	elapsedTime         time.Duration
-	program             *tea.Program // Program allows sending messages from outside the TUI
-	filesAgentProgress  map[string]map[string]orchestrator.AgentProgressUpdate
-	filesAgentOrder     map[string][]string
-	currentFileProgress string // filename of the file currently being processed to show agent progress
+	viewport    viewport.Model
+	spinner     spinner.Model
+	progress    ProgressModel
+	header      HeaderModel
+	content     string
+	ready       bool
+	err         error
+	width       int
+	height      int
+	processing  bool
+	startTime   time.Time
+	elapsedTime time.Duration
+	program     *tea.Program // Program allows sending messages from outside the TUI
+	// filesAgentProgress  map[string]map[string]orchestrator.AgentProgressUpdate // Removed
+	// filesAgentOrder     map[string][]string // Removed
+	// currentFileProgress string // Removed
 
 	// Used to display progress bar
 	progressFilesProcessed int
@@ -104,10 +101,10 @@ func NewModel(provider, model, sessionID string) Model {
 			sessionID: sessionID,
 			status:    "Ready",
 		},
-		spinner:            s,
-		progress:           NewProgressModel(),
-		filesAgentProgress: make(map[string]map[string]orchestrator.AgentProgressUpdate),
-		filesAgentOrder:    make(map[string][]string),
+		spinner:  s,
+		progress: NewProgressModel(),
+		// filesAgentProgress: make(map[string]map[string]orchestrator.AgentProgressUpdate), // Removed
+		// filesAgentOrder:    make(map[string][]string), // Removed
 	}
 }
 
@@ -119,11 +116,13 @@ func (m *Model) SetProgram(p *tea.Program) {
 
 // ProcessAgentUpdate is called by external goroutines to send agent progress updates to the TUI.
 // It sends a message that the TUI's Update function will handle.
+/* // Removed ProcessAgentUpdate function
 func (m *Model) ProcessAgentUpdate(update orchestrator.AgentProgressUpdate) {
 	if m.program != nil {
 		m.program.Send(agentProgressMsg(update))
 	}
 }
+*/
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
@@ -158,11 +157,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update viewport size
 		// Subtract space for header, progress, and agent progress view
 		// Adjust this based on your layout
-		const headerHeight = 3       // Approximate height for header
-		const progressHeight = 3     // Approximate height for overall progress bar
-		const agentViewMinHeight = 5 // Min height for agent view area
+		const headerHeight = 3   // Approximate height for header
+		const progressHeight = 3 // Approximate height for overall progress bar
+		// const agentViewMinHeight = 5 // Min height for agent view area // Removed
 
 		viewportHeight := m.height - headerHeight - progressHeight
+		/* // Removed agent progress view height calculation
 		if m.processing && m.currentFileProgress != "" {
 			// If showing agent progress, allocate space for it
 			agentLines := 0
@@ -178,6 +178,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} // Cap agent view
 			viewportHeight -= agentViewHeight
 		}
+		*/
 		if viewportHeight < 1 {
 			viewportHeight = 1
 		} // Ensure viewport height is at least 1
@@ -193,6 +194,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	/* // Removed agentProgressMsg case
 	case agentProgressMsg:
 		update := orchestrator.AgentProgressUpdate(msg)
 		m.currentFileProgress = update.FilePath // Keep track of the latest file having agent progress
@@ -215,6 +217,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !found {
 			m.filesAgentOrder[update.FilePath] = append(m.filesAgentOrder[update.FilePath], update.AgentName)
 		}
+	*/
 
 	case ContentUpdateMsg:
 		m.finalContent = string(msg)
@@ -269,37 +272,6 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("%s %s\n", m.spinner.View(), statusStyle.Render("Processing Files...")))
 		b.WriteString(m.progress.View())
 		b.WriteString("\n")
-	}
-
-	// Render per-agent progress for the current file
-	if m.currentFileProgress != "" && m.processing {
-		agentUpdatesForFile, fileProgressExists := m.filesAgentProgress[m.currentFileProgress]
-		agentOrder, orderExists := m.filesAgentOrder[m.currentFileProgress]
-
-		if fileProgressExists && orderExists && len(agentOrder) > 0 {
-			b.WriteString(statusStyle.Render(fmt.Sprintf("Agents for %s:", filepath.Base(m.currentFileProgress))))
-			b.WriteString("\n")
-			for _, agentName := range agentOrder {
-				if update, ok := agentUpdatesForFile[agentName]; ok {
-					statusLine := fmt.Sprintf("  %s: %s", update.AgentName, update.Status)
-					if update.Status == orchestrator.StatusStarting {
-						statusLine += " " + m.spinner.View()
-					} else if update.Status == orchestrator.StatusCompleted || update.Status == orchestrator.StatusFailed || update.Status == orchestrator.StatusTimedOut {
-						statusLine += fmt.Sprintf(" (%.2fs)", update.Duration.Seconds())
-					}
-					if update.Error != nil {
-						if update.Status == orchestrator.StatusTimedOut {
-							statusLine += " - Timeout"
-						} else {
-							statusLine += " - Error"
-						}
-					}
-					b.WriteString(agentStatusStyle.Render(statusLine))
-					b.WriteString("\n")
-				}
-			}
-			b.WriteString("\n") // Add a blank line after agent progress list
-		}
 	}
 
 	// Render content viewport
@@ -377,17 +349,19 @@ func (m *Model) SetError(err error) {
 // SetProgress updates the progress state (overall file progress)
 func (m *Model) SetProgress(current, total int, currentFile string) {
 	m.progress.SetProgress(current, total, currentFile)
-	m.currentFileProgress = currentFile // Also update the file for which agent progress is shown
+	// m.currentFileProgress = currentFile // Also update the file for which agent progress is shown // Removed
 
 	// When a new file starts processing for overall progress, clear old agent progress for other files
 	// to avoid showing stale agent data if a file completes very quickly before agent updates arrive.
 	// This is a simple cleanup. A more robust approach might be needed for complex scenarios.
+	/* // Removed agent progress cleanup
 	for f := range m.filesAgentProgress {
 		if f != currentFile {
 			delete(m.filesAgentProgress, f)
 			delete(m.filesAgentOrder, f)
 		}
 	}
+	*/
 }
 
 // tickMsg is used for updating elapsed time

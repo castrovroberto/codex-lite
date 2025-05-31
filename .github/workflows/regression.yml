@@ -1,0 +1,374 @@
+name: Regression Tests
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - basic
+        - advanced
+        - performance
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  setup:
+    name: Setup Test Environment
+    runs-on: ubuntu-latest
+    outputs:
+      test-matrix: ${{ steps.generate-matrix.outputs.matrix }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Generate test matrix
+      id: generate-matrix
+      run: |
+        if [ "${{ github.event.inputs.test_suite }}" = "basic" ]; then
+          echo 'matrix={"include":[{"name":"simple_go","type":"go"},{"name":"basic_web","type":"web"}]}' >> $GITHUB_OUTPUT
+        elif [ "${{ github.event.inputs.test_suite }}" = "advanced" ]; then
+          echo 'matrix={"include":[{"name":"microservices","type":"complex"},{"name":"data_pipeline","type":"data"}]}' >> $GITHUB_OUTPUT
+        elif [ "${{ github.event.inputs.test_suite }}" = "performance" ]; then
+          echo 'matrix={"include":[{"name":"large_codebase","type":"performance"}]}' >> $GITHUB_OUTPUT
+        else
+          echo 'matrix={"include":[{"name":"simple_go","type":"go"},{"name":"basic_web","type":"web"},{"name":"microservices","type":"complex"},{"name":"data_pipeline","type":"data"},{"name":"large_codebase","type":"performance"}]}' >> $GITHUB_OUTPUT
+        fi
+
+  regression-tests:
+    name: Regression Test - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: setup
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.test-matrix) }}
+      fail-fast: false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        
+    - name: Build CGE
+      run: go build -o cge .
+      
+    - name: Setup test workspace
+      run: |
+        mkdir -p test-workspace
+        cd test-workspace
+        
+    - name: Clone sample repository
+      run: |
+        cd test-workspace
+        case "${{ matrix.name }}" in
+          "simple_go")
+            git clone https://github.com/golang/example.git sample-repo
+            ;;
+          "basic_web")
+            git clone https://github.com/gorilla/mux.git sample-repo
+            ;;
+          "microservices")
+            git clone https://github.com/microservices-demo/microservices-demo.git sample-repo
+            ;;
+          "data_pipeline")
+            # Create a synthetic data processing project
+            mkdir -p sample-repo
+            cd sample-repo
+            git init
+            echo "# Data Pipeline Project" > README.md
+            git add README.md
+            git commit -m "Initial commit"
+            ;;
+          "large_codebase")
+            git clone https://github.com/kubernetes/kubernetes.git sample-repo --depth=1
+            ;;
+        esac
+        
+    - name: Run CGE Plan Command
+      id: plan
+      run: |
+        cd test-workspace/sample-repo
+        timeout 300 ../../cge plan "Add comprehensive logging and error handling" --output plan.json || echo "TIMEOUT_OR_ERROR"
+        if [ -f plan.json ]; then
+          echo "plan_success=true" >> $GITHUB_OUTPUT
+          echo "Plan generated successfully"
+          cat plan.json | jq '.tasks | length' > task_count.txt
+          echo "task_count=$(cat task_count.txt)" >> $GITHUB_OUTPUT
+        else
+          echo "plan_success=false" >> $GITHUB_OUTPUT
+          echo "Plan generation failed"
+        fi
+        
+    - name: Validate Plan Structure
+      if: steps.plan.outputs.plan_success == 'true'
+      run: |
+        cd test-workspace/sample-repo
+        # Validate plan JSON structure
+        jq -e '.goal' plan.json > /dev/null
+        jq -e '.tasks' plan.json > /dev/null
+        jq -e '.tasks | length > 0' plan.json > /dev/null
+        echo "Plan structure validation passed"
+        
+    - name: Run CGE Generate (Dry Run)
+      if: steps.plan.outputs.plan_success == 'true'
+      id: generate
+      run: |
+        cd test-workspace/sample-repo
+        timeout 600 ../../cge generate --plan plan.json --dry-run > generate_output.txt 2>&1 || echo "TIMEOUT_OR_ERROR"
+        if grep -q "would create\|would modify" generate_output.txt; then
+          echo "generate_success=true" >> $GITHUB_OUTPUT
+          echo "Generate dry run successful"
+        else
+          echo "generate_success=false" >> $GITHUB_OUTPUT
+          echo "Generate dry run failed"
+          cat generate_output.txt
+        fi
+        
+    - name: Run CGE Review
+      if: steps.generate.outputs.generate_success == 'true'
+      id: review
+      run: |
+        cd test-workspace/sample-repo
+        timeout 300 ../../cge review --dry-run > review_output.txt 2>&1 || echo "TIMEOUT_OR_ERROR"
+        if [ $? -eq 0 ]; then
+          echo "review_success=true" >> $GITHUB_OUTPUT
+          echo "Review completed successfully"
+        else
+          echo "review_success=false" >> $GITHUB_OUTPUT
+          echo "Review failed"
+          cat review_output.txt
+        fi
+        
+    - name: Performance Metrics
+      run: |
+        cd test-workspace/sample-repo
+        echo "=== Performance Metrics ===" > metrics.txt
+        echo "Repository: ${{ matrix.name }}" >> metrics.txt
+        echo "Plan Tasks: ${{ steps.plan.outputs.task_count }}" >> metrics.txt
+        echo "Plan Success: ${{ steps.plan.outputs.plan_success }}" >> metrics.txt
+        echo "Generate Success: ${{ steps.generate.outputs.generate_success }}" >> metrics.txt
+        echo "Review Success: ${{ steps.review.outputs.review_success }}" >> metrics.txt
+        
+        # File count and size metrics
+        echo "Files in repo: $(find . -type f -name '*.go' -o -name '*.py' -o -name '*.js' -o -name '*.ts' | wc -l)" >> metrics.txt
+        echo "Total lines of code: $(find . -type f \( -name '*.go' -o -name '*.py' -o -name '*.js' -o -name '*.ts' \) -exec wc -l {} + | tail -1 | awk '{print $1}')" >> metrics.txt
+        
+        cat metrics.txt
+        
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: regression-test-${{ matrix.name }}
+        path: |
+          test-workspace/sample-repo/plan.json
+          test-workspace/sample-repo/generate_output.txt
+          test-workspace/sample-repo/review_output.txt
+          test-workspace/sample-repo/metrics.txt
+        retention-days: 7
+
+  performance-benchmarks:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_suite == 'performance' || github.event.inputs.test_suite == 'all' || github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Build CGE
+      run: go build -o cge .
+      
+    - name: Run performance benchmarks
+      run: |
+        echo "=== CGE Performance Benchmarks ===" > benchmark_results.txt
+        echo "Date: $(date)" >> benchmark_results.txt
+        echo "Commit: ${{ github.sha }}" >> benchmark_results.txt
+        echo "" >> benchmark_results.txt
+        
+        # Benchmark plan generation
+        echo "Plan Generation Benchmarks:" >> benchmark_results.txt
+        for size in small medium large; do
+          echo "Testing $size project..." >> benchmark_results.txt
+          start_time=$(date +%s.%N)
+          timeout 120 ./cge plan "Add logging to $size project" --output ${size}_plan.json > /dev/null 2>&1 || echo "TIMEOUT"
+          end_time=$(date +%s.%N)
+          duration=$(echo "$end_time - $start_time" | bc)
+          echo "  $size project: ${duration}s" >> benchmark_results.txt
+        done
+        
+        # Memory usage benchmark
+        echo "" >> benchmark_results.txt
+        echo "Memory Usage:" >> benchmark_results.txt
+        /usr/bin/time -v ./cge plan "Test memory usage" --output memory_test_plan.json 2>&1 | grep "Maximum resident set size" >> benchmark_results.txt || echo "Memory measurement failed" >> benchmark_results.txt
+        
+        cat benchmark_results.txt
+        
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-benchmarks
+        path: benchmark_results.txt
+        retention-days: 30
+
+  regression-summary:
+    name: Regression Test Summary
+    runs-on: ubuntu-latest
+    needs: [regression-tests, performance-benchmarks]
+    if: always()
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Generate summary report
+      run: |
+        echo "# CGE Regression Test Summary" > summary.md
+        echo "Date: $(date)" >> summary.md
+        echo "Commit: ${{ github.sha }}" >> summary.md
+        echo "" >> summary.md
+        
+        echo "## Test Results" >> summary.md
+        echo "| Test Case | Plan | Generate | Review | Status |" >> summary.md
+        echo "|-----------|------|----------|--------|--------|" >> summary.md
+        
+        # Process each test result
+        for dir in regression-test-*; do
+          if [ -d "$dir" ]; then
+            test_name=$(echo $dir | sed 's/regression-test-//')
+            if [ -f "$dir/metrics.txt" ]; then
+              plan_success=$(grep "Plan Success:" "$dir/metrics.txt" | cut -d' ' -f3)
+              generate_success=$(grep "Generate Success:" "$dir/metrics.txt" | cut -d' ' -f3)
+              review_success=$(grep "Review Success:" "$dir/metrics.txt" | cut -d' ' -f3)
+              
+              if [ "$plan_success" = "true" ] && [ "$generate_success" = "true" ] && [ "$review_success" = "true" ]; then
+                status="✅ PASS"
+              else
+                status="❌ FAIL"
+              fi
+              
+              echo "| $test_name | $plan_success | $generate_success | $review_success | $status |" >> summary.md
+            else
+              echo "| $test_name | unknown | unknown | unknown | ❓ NO DATA |" >> summary.md
+            fi
+          fi
+        done
+        
+        echo "" >> summary.md
+        echo "## Performance Metrics" >> summary.md
+        if [ -f "performance-benchmarks/benchmark_results.txt" ]; then
+          echo '```' >> summary.md
+          cat performance-benchmarks/benchmark_results.txt >> summary.md
+          echo '```' >> summary.md
+        else
+          echo "Performance benchmarks not available" >> summary.md
+        fi
+        
+        echo "" >> summary.md
+        echo "## Recommendations" >> summary.md
+        
+        # Count failures
+        failures=$(grep "❌ FAIL" summary.md | wc -l)
+        if [ $failures -gt 0 ]; then
+          echo "- ⚠️ $failures test case(s) failed - investigate and fix" >> summary.md
+          echo "- Review failed test artifacts for detailed error information" >> summary.md
+        else
+          echo "- ✅ All regression tests passed" >> summary.md
+        fi
+        
+        cat summary.md
+        
+    - name: Upload summary report
+      uses: actions/upload-artifact@v4
+      with:
+        name: regression-summary
+        path: summary.md
+        retention-days: 90
+        
+    - name: Create issue on failure
+      if: contains(needs.regression-tests.result, 'failure')
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const summary = fs.readFileSync('summary.md', 'utf8');
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `Regression Test Failure - ${new Date().toISOString().split('T')[0]}`,
+            body: `## Automated Regression Test Failure Report
+            
+            The nightly regression tests have detected failures. Please review and address the issues.
+            
+            **Commit:** ${context.sha}
+            **Workflow:** ${context.workflow}
+            **Run ID:** ${context.runId}
+            
+            ${summary}
+            
+            **Action Required:**
+            1. Review the failed test artifacts
+            2. Investigate the root cause
+            3. Fix the issues and verify with manual testing
+            4. Close this issue once resolved
+            `,
+            labels: ['bug', 'regression', 'automated']
+          });
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [regression-summary]
+    if: always()
+    
+    steps:
+    - name: Clean up old artifacts
+      uses: actions/github-script@v6
+      with:
+        script: |
+          // Clean up artifacts older than 30 days
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            per_page: 100
+          });
+          
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          
+          for (const artifact of artifacts.data.artifacts) {
+            const createdAt = new Date(artifact.created_at);
+            if (createdAt < thirtyDaysAgo && artifact.name.startsWith('regression-test-')) {
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id
+              });
+              console.log(`Deleted old artifact: ${artifact.name}`);
+            }
+          } 

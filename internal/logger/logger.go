@@ -2,6 +2,7 @@
 package logger
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -32,6 +33,54 @@ func InitLogger(levelStr string) {
 	}
 
 	globalLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+}
+
+// InitLoggerForTUI initializes the logger to write to a file instead of stderr to avoid TUI interference
+func InitLoggerForTUI(levelStr string, logFile string) error {
+	var level slog.Level
+	switch strings.ToLower(levelStr) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error", "err":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo // Default to info for unknown levels
+	}
+
+	// Create or open log file
+	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+
+	// Create a multi-writer that writes to both file and discard (no stderr during TUI)
+	writer := io.MultiWriter(file, io.Discard)
+	globalLogger = slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: level}))
+
+	return nil
+}
+
+// InitLoggerWithWriter initializes the logger with a custom writer
+func InitLoggerWithWriter(levelStr string, writer io.Writer) {
+	var level slog.Level
+	switch strings.ToLower(levelStr) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error", "err":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo // Default to info for unknown levels
+	}
+
+	globalLogger = slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: level}))
 }
 
 // Get returns the initialized global logger.

@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/castrovroberto/CGE/internal/security"
 	"gopkg.in/yaml.v3"
 )
 
@@ -76,6 +76,9 @@ var dependencyFiles = map[string]struct {
 
 // AnalyzeDependencies scans the codebase for dependency files
 func AnalyzeDependencies(rootPath string) ([]*DependencyInfo, error) {
+	// Create safe file operations with root path as allowed root
+	safeOps := security.NewSafeFileOps(rootPath)
+
 	var results []*DependencyInfo
 
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
@@ -94,7 +97,7 @@ func AnalyzeDependencies(rootPath string) ([]*DependencyInfo, error) {
 		// Check each dependency file pattern
 		for depType, config := range dependencyFiles {
 			if strings.HasSuffix(path, config.pattern) {
-				content, err := os.ReadFile(path)
+				content, err := safeOps.SafeReadFile(path)
 				if err != nil {
 					return fmt.Errorf("failed to read %s: %w", path, err)
 				}

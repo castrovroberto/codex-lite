@@ -6,36 +6,65 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/castrovroberto/CGE/internal/security"
 )
 
 // ChatHistory represents the persistent chat history
 type ChatHistory struct {
-	SessionID string        `json:"session_id"`
-	ModelName string        `json:"model_name"`
-	Messages  []chatMessage `json:"messages"`
-	StartTime time.Time     `json:"start_time"`
-	EndTime   *time.Time    `json:"end_time,omitempty"`
+	SessionID    string                 `json:"session_id"`
+	ModelName    string                 `json:"model_name"`
+	Messages     []chatMessage          `json:"messages"`
+	ToolCalls    []ToolCallRecord       `json:"tool_calls,omitempty"`
+	StartTime    time.Time              `json:"start_time"`
+	EndTime      *time.Time             `json:"end_time,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	Command      string                 `json:"command,omitempty"`
+	SystemPrompt string                 `json:"system_prompt,omitempty"`
+}
+
+// ToolCallRecord represents a tool call in chat history
+type ToolCallRecord struct {
+	ID           string          `json:"id"`
+	Timestamp    time.Time       `json:"timestamp"`
+	ToolName     string          `json:"tool_name"`
+	Parameters   json.RawMessage `json:"parameters"`
+	Result       *ToolCallResult `json:"result,omitempty"`
+	Duration     time.Duration   `json:"duration"`
+	Success      bool            `json:"success"`
+	Error        string          `json:"error,omitempty"`
+	MessageIndex int             `json:"message_index"` // Index of related message
+}
+
+// ToolCallResult represents the result of a tool call
+type ToolCallResult struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
 }
 
 // SaveHistory saves the current chat history to a file
 func (m *Model) SaveHistory() error {
 	now := time.Now() // Get current time once
 	history := ChatHistory{
-		SessionID: m.sessionID,
-		ModelName: m.modelName,
-		Messages:  m.messages,
-		StartTime: m.chatStartTime, // Use the actual chat start time from the model
-		EndTime:   &now,            // Set the end time to when history is saved
+		SessionID: m.header.GetSessionID(),
+		ModelName: m.header.GetModelName(),
+		Messages:  m.messageList.GetMessages(),
+		ToolCalls: []ToolCallRecord{}, // Initialize empty, will be populated if available
+		StartTime: m.chatStartTime,    // Use the actual chat start time from the model
+		EndTime:   &now,               // Set the end time to when history is saved
+		Metadata:  make(map[string]interface{}),
+		Command:   "chat",
 	}
 
 	// Create history directory if it doesn't exist
-	historyDir := filepath.Join(os.Getenv("HOME"), ".codex-lite", "chat_history")
-	if err := os.MkdirAll(historyDir, 0755); err != nil {
+	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
+	if err := os.MkdirAll(historyDir, 0750); err != nil {
 		return fmt.Errorf("failed to create history directory: %w", err)
 	}
 
 	// Create history file with timestamp
-	filename := fmt.Sprintf("chat_%s.json", m.sessionID)
+	filename := fmt.Sprintf("chat_%s.json", m.header.GetSessionID())
 	filepath := filepath.Join(historyDir, filename)
 
 	// Marshal history to JSON
@@ -45,7 +74,7 @@ func (m *Model) SaveHistory() error {
 	}
 
 	// Write to file
-	if err := os.WriteFile(filepath, data, 0644); err != nil {
+	if err := os.WriteFile(filepath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write chat history: %w", err)
 	}
 
@@ -54,10 +83,13 @@ func (m *Model) SaveHistory() error {
 
 // LoadHistory loads chat history from a file
 func LoadHistory(sessionID string) (*ChatHistory, error) {
-	historyDir := filepath.Join(os.Getenv("HOME"), ".codex-lite", "chat_history")
+	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
 	filepath := filepath.Join(historyDir, fmt.Sprintf("chat_%s.json", sessionID))
 
-	data, err := os.ReadFile(filepath)
+	// Create safe file operations with history directory as allowed root
+	safeOps := security.NewSafeFileOps(historyDir)
+
+	data, err := safeOps.SafeReadFile(filepath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read chat history: %w", err)
 	}
@@ -72,10 +104,10 @@ func LoadHistory(sessionID string) (*ChatHistory, error) {
 
 // ListChatSessions returns a list of available chat session IDs
 func ListChatSessions() ([]string, error) {
-	historyDir := filepath.Join(os.Getenv("HOME"), ".codex-lite", "chat_history")
+	historyDir := filepath.Join(os.Getenv("HOME"), ".cge", "chat_history")
 
 	// Create directory if it doesn't exist
-	if err := os.MkdirAll(historyDir, 0755); err != nil {
+	if err := os.MkdirAll(historyDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create history directory: %w", err)
 	}
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/castrovroberto/codex-lite/internal/config"
-	"github.com/castrovroberto/codex-lite/internal/logger"
+	"github.com/castrovroberto/CGE/internal/config"
+	"github.com/castrovroberto/CGE/internal/logger"
 )
 
 // Key type to avoid collisions in context values
@@ -19,11 +19,12 @@ const (
 )
 
 // ConfigFromContext retrieves AppConfig from context
+// Returns zero value if not found - caller should handle this case
 func ConfigFromContext(ctx context.Context) config.AppConfig {
 	val := ctx.Value(ConfigKey)
 	if val == nil {
-		// Return default config instead of panicking
-		return config.GetConfig()
+		// Return zero value - callers should check if config is properly initialized
+		return config.AppConfig{}
 	}
 
 	// Try pointer first
@@ -36,17 +37,17 @@ func ConfigFromContext(ctx context.Context) config.AppConfig {
 		return cfg
 	}
 
-	// Return default config if type assertion fails
-	logger.Get().Warn("Value stored with ConfigKey is not of type config.AppConfig or *config.AppConfig, using default config")
-	return config.GetConfig()
+	// Return zero value if type assertion fails
+	logger.Get().Warn("Value stored with ConfigKey is not of type config.AppConfig or *config.AppConfig")
+	return config.AppConfig{}
 }
 
 // ConfigPtrFromContext retrieves a pointer to AppConfig from context
+// Returns nil if not found - caller should handle this case
 func ConfigPtrFromContext(ctx context.Context) *config.AppConfig {
 	val := ctx.Value(ConfigKey)
 	if val == nil {
-		cfg := config.GetConfig()
-		return &cfg
+		return nil
 	}
 
 	// Try pointer
@@ -60,10 +61,9 @@ func ConfigPtrFromContext(ctx context.Context) *config.AppConfig {
 		return &cfgCopy
 	}
 
-	// Return pointer to default config if type assertion fails
-	logger.Get().Warn("Value stored with ConfigKey is not of type config.AppConfig or *config.AppConfig, using default config")
-	cfg := config.GetConfig()
-	return &cfg
+	// Return nil if type assertion fails
+	logger.Get().Warn("Value stored with ConfigKey is not of type config.AppConfig or *config.AppConfig")
+	return nil
 }
 
 // LoggerFromContext retrieves Logger from context

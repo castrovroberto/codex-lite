@@ -3,10 +3,11 @@ package analyzer
 import (
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/castrovroberto/CGE/internal/security"
 )
 
 // SecurityIssue represents a potential security concern
@@ -40,7 +41,7 @@ var securityPatterns = []struct {
 	},
 	{
 		Type:        "Private Key",
-		Pattern:     regexp.MustCompile(`-----BEGIN [A-Z]+ PRIVATE KEY-----`),
+		Pattern:     regexp.MustCompile(`-{5}BEGIN [A-Z]+ PRIVATE KEY-{5}`),
 		Description: "Private key found in source code",
 		Severity:    "CRITICAL",
 	},
@@ -87,6 +88,9 @@ var sensitiveFiles = []struct {
 
 // AnalyzeSecurity performs security analysis of the codebase
 func AnalyzeSecurity(rootPath string) ([]SecurityIssue, error) {
+	// Create safe file operations with root path as allowed root
+	safeOps := security.NewSafeFileOps(rootPath)
+
 	var issues []SecurityIssue
 
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
@@ -123,8 +127,8 @@ func AnalyzeSecurity(rootPath string) ([]SecurityIssue, error) {
 			return nil
 		}
 
-		// Read and analyze file content
-		content, err := os.ReadFile(path)
+		// Read and analyze file content using secure file operations
+		content, err := safeOps.SafeReadFile(path)
 		if err != nil {
 			return nil
 		}

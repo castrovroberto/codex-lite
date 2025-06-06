@@ -178,6 +178,7 @@ var defaultSlashCommands = []string{
 	"/session ", // Suggest space for session id or action
 	"/status",   // Show current status and statistics
 	"/tools",    // List available tools
+	"/context",  // Inject current workspace context
 	"/quit",
 }
 
@@ -273,21 +274,29 @@ func InitialModel(ctx context.Context, cfg *config.AppConfig, modelName string) 
 	toolFactory := agent.NewToolFactory(absWorkspaceRoot)
 	toolRegistry := toolFactory.CreateGenerationRegistry()
 
-	// Create chat presenter with enhanced system prompt that includes context instructions
+	// Create header model to get current context
+	sessionID := time.Now().Format("20060102150405")
+	headerModel := NewHeaderModel(NewDefaultTheme(), cfg.LLM.Provider, modelName, sessionID, "Active")
+
+	// Get the base system prompt
 	systemPrompt := cfg.GetLoadedChatSystemPrompt()
 
-	// Enhance system prompt with context awareness instructions
-	enhancedSystemPrompt := systemPrompt + "\n\n" + buildContextAwarenessInstructions(absWorkspaceRoot)
+	// Add header context to the system prompt
+	headerContext := headerModel.FormatContextForLLM()
+	enhancedSystemPrompt := headerContext + "\n" + systemPrompt + "\n\n" + buildContextAwarenessInstructions(absWorkspaceRoot)
 
 	presenter := NewChatPresenter(ctx, llmClient, toolRegistry, enhancedSystemPrompt, modelName)
 
-	// Create model with options
-	return NewChatModel(
+	// Create model with options including the header model
+	model := NewChatModel(
 		WithParentContext(ctx),
 		WithInitialConfig(cfg),
 		WithMessageProvider(presenter),
 		WithDelayProvider(&RealDelayProvider{}),
+		WithHeader(headerModel), // Pass the header model to the chat model
 	)
+
+	return model
 }
 
 func (m Model) Init() tea.Cmd {
@@ -514,10 +523,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if m.inputArea.GetValue() != "" && !m.loading {
+				// Check if we should refresh context before sending message
+				if m.ShouldRefreshContext() {
+					m.RefreshWorkspaceContext()
+				}
+
+				userPrompt := m.inputArea.GetValue()
+
+				// Handle special slash commands
+				if strings.HasPrefix(userPrompt, "/context") {
+					m.InjectCurrentContext()
+					m.inputArea.Reset()
+					return m, nil
+				}
+
 				// Start loading state with proper coordination
 				m.setLoading(true)
 
-				userPrompt := m.inputArea.GetValue()
 				m.messageList.AddMessage(chatMessage{
 					text:      userPrompt,
 					sender:    "You",
@@ -843,6 +865,43 @@ func (m *Model) StatusBar() *StatusBarModel {
 // Theme returns the theme
 func (m *Model) Theme() *Theme {
 	return m.theme
+}
+
+// RefreshWorkspaceContext refreshes the workspace context and optionally injects it into the conversation
+func (m *Model) RefreshWorkspaceContext() {
+	if m.header != nil {
+		// Refresh Git information in the header
+		m.header.RefreshGitInfo()
+
+		// Add context refresh message to the conversation
+		contextMsg := chatMessage{
+			text:       "🔄 Workspace context refreshed",
+			sender:     "System",
+			timestamp:  time.Now(),
+			isMarkdown: false,
+		}
+		m.messageList.AddMessage(contextMsg)
+	}
+}
+
+// InjectCurrentContext injects the current workspace context into the conversation
+func (m *Model) InjectCurrentContext() {
+	if m.header != nil {
+		contextText := m.header.FormatContextForLLM()
+		contextMsg := chatMessage{
+			text:       contextText,
+			sender:     "System",
+			timestamp:  time.Now(),
+			isMarkdown: true,
+		}
+		m.messageList.AddMessage(contextMsg)
+	}
+}
+
+// ShouldRefreshContext determines if context should be refreshed based on conversation length
+func (m *Model) ShouldRefreshContext() bool {
+	// Refresh context every 10 messages to avoid context window issues
+	return m.messageList != nil && len(m.messageList.GetMessages()) > 0 && len(m.messageList.GetMessages())%10 == 0
 }
 
 // buildContextAwarenessInstructions creates enhanced context instructions for the LLM
